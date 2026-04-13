@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>JSON Export Browser</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>JSON Export Browser</h1>
+      <p>Browse nested file trees, import JSON exports with overwrite confirmation, and run metadata/PII analysis.</p>
+    </header>
+
+    <main>
+      <section class="panel controls">
+        <label for="exportSelect">Select export file</label>
+        <select id="exportSelect"></select>
+        <button id="reloadBtn">Reload files</button>
+
+        <label for="searchInput">Filter by name/path</label>
+        <input id="searchInput" placeholder="e.g. backstage or quotes" />
+
+        <h3>Import JSON file</h3>
+        <input id="importInput" type="file" accept=".json,application/json" />
+        <button id="importBtn">Import selected JSON</button>
+        <p id="importStatus" class="empty"></p>
+      </section>
+
+      <section class="panel meta">
+        <h2>Export info</h2>
+        <dl>
+          <dt>Company</dt>
+          <dd id="companyValue">-</dd>
+          <dt>Folder</dt>
+          <dd id="folderValue">-</dd>
+          <dt>Description</dt>
+          <dd id="descriptionValue">-</dd>
+        </dl>
+      </section>
+
+      <section class="panel stats">
+        <h2>Analysis</h2>
+        <div id="statsGrid" class="stats-grid"></div>
+
+        <h3>File types (count + bytes)</h3>
+        <ul id="fileTypesList" class="compact-list"></ul>
+
+        <h3>Top largest files</h3>
+        <ul id="largestFilesList" class="compact-list"></ul>
+
+        <h3>Potential PII indicators (path/name only)</h3>
+        <div class="action-row">
+          <button id="exportPiiJsonBtn">Export PII JSON</button>
+          <button id="exportPiiCsvBtn">Export PII CSV</button>
+        </div>
+        <ul id="piiList" class="compact-list"></ul>
+      </section>
+
+      <section class="panel tree">
+        <h2>Tree view</h2>
+        <div id="treeRoot"></div>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
