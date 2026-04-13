@@ -16,6 +16,8 @@ A local web app to browse nested JSON export files, import new JSON files from t
   - top largest files
   - potential PII indicators (heuristic scan of file names/paths only)
   - PII severity labels (`low`, `medium`, `high`)
+  - PII category buckets focused on high-value data (NDAs/contracts, passports, driver licenses, payroll/tax, banking, health, etc.)
+  - PII risk scoring (`0-100`) with low/medium/high classification bands
   - export PII findings as JSON or CSV
 
 ## Start
@@ -35,4 +37,5 @@ Open: <http://127.0.0.1:8000>
 ## Notes
 
 - PII detection is heuristic and based only on file names/paths, not deep file content scanning.
+- The risk score is a weighted heuristic designed for triage, not a compliance guarantee.
 - Only `.json` files are accepted for import.

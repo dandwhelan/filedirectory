@@ -92,6 +92,37 @@ button:hover { background: #1e40af; }
   font-weight: 700;
 }
 
+.pii-score-card {
+  border: 1px solid #dbeafe;
+  background: #f8fbff;
+  border-radius: 8px;
+  padding: 0.6rem;
+  margin-bottom: 0.6rem;
+}
+
+.pii-score-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.4rem;
+  align-items: baseline;
+}
+
+.pii-score-line strong {
+  font-size: 1.25rem;
+}
+
+.score-pill {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.score-low { background: #dcfce7; color: #166534; }
+.score-medium { background: #fef9c3; color: #854d0e; }
+.score-high { background: #fee2e2; color: #991b1b; }
+
 .compact-list {
   margin: 0;
   padding-left: 1.2rem;

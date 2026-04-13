@@ -14,6 +14,8 @@ const statsGrid = document.getElementById("statsGrid");
 const fileTypesList = document.getElementById("fileTypesList");
 const largestFilesList = document.getElementById("largestFilesList");
 const piiList = document.getElementById("piiList");
+const piiCategoryList = document.getElementById("piiCategoryList");
+const piiScoreCard = document.getElementById("piiScoreCard");
 const exportPiiJsonBtn = document.getElementById("exportPiiJsonBtn");
 const exportPiiCsvBtn = document.getElementById("exportPiiCsvBtn");
 
@@ -21,13 +23,23 @@ let currentExport = null;
 let lastPiiSignals = [];
 
 const piiPatterns = [
-  { label: "Email-like path", severity: "high", regex: /[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/ },
-  { label: "Phone-like path", severity: "medium", regex: /(\+?\d[\d\-\s().]{7,}\d)/ },
-  { label: "SSN-like path", severity: "high", regex: /\b\d{3}-\d{2}-\d{4}\b/ },
-  { label: "Credit-card-like path", severity: "high", regex: /\b(?:\d[ -]*?){13,16}\b/ },
-  { label: "API key token", severity: "medium", regex: /(api[_-]?key|secret|token|passwd|password)/i },
-  { label: "Personal identifier keyword", severity: "low", regex: /(dob|birth|passport|driver|license|tax_id|national_id)/i },
+  { label: "Contract or agreement", category: "Legal agreements", severity: "high", score: 35, regex: /(contract|agreement|msa|sow|statement[_ -]?of[_ -]?work|order[_ -]?form)/i },
+  { label: "NDA / confidentiality", category: "Legal agreements", severity: "high", score: 42, regex: /(nda|non[- _]?disclosure|confidentiality[_ -]?agreement|mutual[_ -]?nda)/i },
+  { label: "Passport or travel identity", category: "Government ID", severity: "high", score: 40, regex: /(passport|travel[_ -]?document|resident[_ -]?permit|visa)/i },
+  { label: "Driver license records", category: "Government ID", severity: "high", score: 38, regex: /(driver'?s?[_ -]?licen[sc]e|driving[_ -]?licen[sc]e|dmv|vehicle[_ -]?registration)/i },
+  { label: "Tax forms and identifiers", category: "Tax & payroll", severity: "high", score: 36, regex: /(w[-_ ]?2|w[-_ ]?9|1099|tax[_ -]?return|irs|ein|tin|ssn|national[_ -]?id)/i },
+  { label: "Banking / payment instructions", category: "Financial accounts", severity: "high", score: 34, regex: /(bank[_ -]?account|routing|iban|swift|wire[_ -]?transfer|payment[_ -]?instruction)/i },
+  { label: "Payroll / compensation records", category: "Tax & payroll", severity: "medium", score: 24, regex: /(payroll|salary|bonus|compensation|payslip|direct[_ -]?deposit)/i },
+  { label: "Medical / health records", category: "Health data", severity: "high", score: 32, regex: /(medical|health[_ -]?record|patient|diagnosis|prescription|phi|hipaa)/i },
+  { label: "Background checks or screening", category: "Sensitive personnel", severity: "medium", score: 26, regex: /(background[_ -]?check|criminal[_ -]?record|fingerprint|screening)/i },
+  { label: "Credentials / secret token", category: "Credentials / secrets", severity: "medium", score: 22, regex: /(api[_-]?key|secret|token|passwd|password|private[_ -]?key)/i },
 ];
+
+const scoreBandByValue = (score) => {
+  if (score >= 70) return { band: "High", className: "score-high" };
+  if (score >= 35) return { band: "Medium", className: "score-medium" };
+  return { band: "Low", className: "score-low" };
+};
 
 function setMeta(data) {
   companyValue.textContent = data.company || "-";
@@ -84,12 +96,31 @@ function analyzeExport(data) {
       if (pattern.regex.test(text)) {
         piiSignals.push({
           pattern: pattern.label,
+          category: pattern.category,
           severity: pattern.severity,
+          score: pattern.score,
           location: node.path || node.name || "(unknown)",
         });
       }
     });
   });
+
+  const totalRawScore = piiSignals.reduce((sum, item) => sum + item.score, 0);
+  const categoryBuckets = piiSignals.reduce((acc, item) => {
+    const key = item.category || "Other";
+    if (!acc[key]) acc[key] = { count: 0, weightedScore: 0 };
+    acc[key].count += 1;
+    acc[key].weightedScore += item.score;
+    return acc;
+  }, {});
+  const categoryEntries = Object.entries(categoryBuckets)
+    .sort((a, b) => b[1].weightedScore - a[1].weightedScore)
+    .map(([category, value]) => ({ category, ...value }));
+  const normalizedScore = Math.min(
+    100,
+    Math.round(totalRawScore / Math.max(1, files.length + directories.length) * 8 + categoryEntries.length * 4),
+  );
+  const scoreBand = scoreBandByValue(normalizedScore);
 
   const largestFiles = [...files]
     .sort((a, b) => Number(b.size || 0) - Number(a.size || 0))
@@ -103,6 +134,12 @@ function analyzeExport(data) {
     totalSize,
     extensionEntries: Object.entries(extensions).sort((a, b) => b[1].bytes - a[1].bytes),
     piiSignals,
+    piiScore: {
+      totalRawScore,
+      normalizedScore,
+      scoreBand,
+      categories: categoryEntries,
+    },
     largestFiles,
   };
 }
@@ -157,6 +194,33 @@ function renderStats(analysis) {
   }
 
   piiList.innerHTML = "";
+  piiCategoryList.innerHTML = "";
+  const score = analysis.piiScore;
+  piiScoreCard.innerHTML = `
+    <div class="pii-score-line">
+      <span>PII Risk Score</span>
+      <strong>${score.normalizedScore}/100</strong>
+    </div>
+    <div class="pii-score-line">
+      <span>Classification</span>
+      <span class="score-pill ${score.scoreBand.className}">${score.scoreBand.band}</span>
+    </div>
+    <div class="pii-score-line muted">
+      <span>Raw signal score</span>
+      <span>${score.totalRawScore}</span>
+    </div>
+  `;
+
+  if (!score.categories.length) {
+    piiCategoryList.innerHTML = '<li class="empty">No PII categories detected.</li>';
+  } else {
+    score.categories.forEach((item) => {
+      const li = document.createElement("li");
+      li.textContent = `${item.category} — ${item.count} matches (weighted score ${item.weightedScore})`;
+      piiCategoryList.appendChild(li);
+    });
+  }
+
   if (!analysis.piiSignals.length) {
     piiList.innerHTML = '<li class="empty">No obvious PII indicators in file names/paths</li>';
   } else {
@@ -295,9 +359,9 @@ function exportPiiJson() {
 }
 
 function exportPiiCsv() {
-  const rows = [["severity", "pattern", "location"]];
+  const rows = [["severity", "category", "pattern", "score", "location"]];
   lastPiiSignals.forEach((item) => {
-    rows.push([item.severity, item.pattern, item.location]);
+    rows.push([item.severity, item.category, item.pattern, item.score, item.location]);
   });
 
   const csv = rows
