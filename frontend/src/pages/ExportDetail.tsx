@@ -14,7 +14,7 @@ import { formatDate } from "@/lib/utils";
 import { StatsRow } from "@/components/StatsRow";
 import { FileTypeChart, PiiCategoryChart } from "@/components/Charts";
 import { PiiTable } from "@/components/PiiTable";
-import { TreeView } from "@/components/TreeView";
+import { LazyTreeView } from "@/components/TreeView";
 
 export function ExportDetail() {
   const { id } = useParams<{ id: string }>();
@@ -66,8 +66,6 @@ export function ExportDetail() {
       </div>
     );
   }
-
-  const tree = data.tree;
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
@@ -133,7 +131,7 @@ export function ExportDetail() {
           <h3 className="mb-2 text-sm font-semibold text-card-foreground">
             File Type Distribution
           </h3>
-          <FileTypeChart nodes={tree.children || []} />
+          <FileTypeChart data={data.file_type_counts} />
         </div>
         <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
           <h3 className="mb-2 text-sm font-semibold text-card-foreground">
@@ -171,7 +169,7 @@ export function ExportDetail() {
             />
           </div>
         </div>
-        <TreeView nodes={tree.children || []} filter={treeFilter} />
+        <LazyTreeView exportId={data.id} filter={treeFilter} />
       </div>
     </div>
   );

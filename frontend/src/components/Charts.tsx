@@ -10,7 +10,7 @@ import {
   ResponsiveContainer,
   type PieLabelRenderProps,
 } from "recharts";
-import type { PiiSignal, TreeNode } from "@/lib/api";
+import type { PiiSignal, FileTypeCount } from "@/lib/api";
 
 const CHART_COLORS = [
   "var(--color-chart-1)",
@@ -23,43 +23,12 @@ const CHART_COLORS = [
   "var(--color-chart-8)",
 ];
 
-function getExtension(name: string): string {
-  const idx = name.lastIndexOf(".");
-  if (idx <= 0 || idx === name.length - 1) return "other";
-  return name.slice(idx + 1).toLowerCase();
-}
-
-function flattenNodes(nodes: TreeNode[]): TreeNode[] {
-  const result: TreeNode[] = [];
-  const stack = [...nodes];
-  while (stack.length) {
-    const node = stack.pop()!;
-    result.push(node);
-    if (node.children) stack.push(...node.children);
-  }
-  return result;
-}
-
 interface FileTypeChartProps {
-  nodes: TreeNode[];
+  data: FileTypeCount[];
 }
 
-export function FileTypeChart({ nodes }: FileTypeChartProps) {
-  const allNodes = flattenNodes(nodes);
-  const files = allNodes.filter((n) => !n.is_dir);
-
-  const extMap: Record<string, number> = {};
-  files.forEach((f) => {
-    const ext = getExtension(f.name);
-    extMap[ext] = (extMap[ext] || 0) + 1;
-  });
-
-  const data = Object.entries(extMap)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 8)
-    .map(([name, value]) => ({ name: `.${name}`, value }));
-
-  if (data.length === 0) {
+export function FileTypeChart({ data }: FileTypeChartProps) {
+  if (!data || data.length === 0) {
     return (
       <p className="py-8 text-center text-sm text-muted-foreground">
         No files to chart.

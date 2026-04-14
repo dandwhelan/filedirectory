@@ -13,12 +13,15 @@ export interface ExportSummary {
   pii_band: string;
 }
 
-export interface TreeNode {
+export interface LazyTreeNode {
+  id: number;
   name: string;
   path: string;
   is_dir: boolean;
   size: number;
-  children?: TreeNode[];
+  has_children: boolean;
+  children?: LazyTreeNode[];
+  loaded?: boolean;
 }
 
 export interface PiiSignal {
@@ -29,15 +32,22 @@ export interface PiiSignal {
   location: string;
 }
 
+export interface FileTypeCount {
+  name: string;
+  value: number;
+}
+
 export interface ExportDetail extends ExportSummary {
-  tree: {
-    company?: string;
-    folder?: string;
-    description?: string;
-    children: TreeNode[];
-  };
   pii_signals: PiiSignal[];
-  raw_json?: string;
+  file_type_counts: FileTypeCount[];
+}
+
+export interface PaginatedExports {
+  exports: ExportSummary[];
+  total: number;
+  page: number;
+  per_page: number;
+  total_pages: number;
 }
 
 export interface ImportResult {
@@ -51,17 +61,39 @@ export interface ImportResult {
 
 const API_BASE = "/api";
 
-export async function fetchExports(): Promise<ExportSummary[]> {
-  const res = await fetch(`${API_BASE}/exports`);
+export async function fetchExports(params?: {
+  page?: number;
+  per_page?: number;
+  search?: string;
+  sort?: string;
+  order?: string;
+}): Promise<PaginatedExports> {
+  const qs = new URLSearchParams();
+  if (params?.page) qs.set("page", String(params.page));
+  if (params?.per_page) qs.set("per_page", String(params.per_page));
+  if (params?.search) qs.set("search", params.search);
+  if (params?.sort) qs.set("sort", params.sort);
+  if (params?.order) qs.set("order", params.order);
+  const res = await fetch(`${API_BASE}/exports?${qs}`);
   if (!res.ok) throw new Error("Failed to load exports");
-  const data = await res.json();
-  return data.exports;
+  return res.json();
 }
 
 export async function fetchExportDetail(id: number): Promise<ExportDetail> {
   const res = await fetch(`${API_BASE}/export/${id}`);
   if (!res.ok) throw new Error("Failed to load export");
   return res.json();
+}
+
+export async function fetchTreeChildren(
+  exportId: number,
+  parentId?: number
+): Promise<LazyTreeNode[]> {
+  const qs = parentId != null ? `?parent_id=${parentId}` : "";
+  const res = await fetch(`${API_BASE}/export/${exportId}/children${qs}`);
+  if (!res.ok) throw new Error("Failed to load tree nodes");
+  const data = await res.json();
+  return data.children;
 }
 
 export async function importExport(

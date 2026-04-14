@@ -1,16 +1,19 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Search,
   Plus,
   ArrowUpDown,
   Database,
   FileJson,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { fetchExports, type ExportSummary } from "@/lib/api";
 import { ExportCard } from "@/components/ExportCard";
 import { ImportDialog } from "@/components/ImportDialog";
 
 type SortKey = "updated_at" | "filename" | "pii_score" | "total_size";
+const PER_PAGE = 18;
 
 export function Dashboard() {
   const [exports, setExports] = useState<ExportSummary[]>([]);
@@ -18,49 +21,48 @@ export function Dashboard() {
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<SortKey>("updated_at");
   const [importOpen, setImportOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
 
-  const loadExports = async () => {
+  // Debounce search so we don't fire on every keystroke
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const loadExports = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await fetchExports();
-      setExports(data);
+      const data = await fetchExports({
+        page,
+        per_page: PER_PAGE,
+        search: debouncedSearch,
+        sort: sortBy,
+        order: sortBy === "filename" ? "asc" : "desc",
+      });
+      setExports(data.exports);
+      setTotalPages(data.total_pages);
+      setTotal(data.total);
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, debouncedSearch, sortBy]);
 
   useEffect(() => {
     loadExports();
-  }, []);
+  }, [loadExports]);
 
-  const filtered = useMemo(() => {
-    let items = exports;
-    if (search) {
-      const q = search.toLowerCase();
-      items = items.filter(
-        (e) =>
-          e.filename.toLowerCase().includes(q) ||
-          e.company.toLowerCase().includes(q) ||
-          e.description.toLowerCase().includes(q) ||
-          e.folder.toLowerCase().includes(q)
-      );
-    }
-    return [...items].sort((a, b) => {
-      switch (sortBy) {
-        case "filename":
-          return a.filename.localeCompare(b.filename);
-        case "pii_score":
-          return b.pii_score - a.pii_score;
-        case "total_size":
-          return b.total_size - a.total_size;
-        case "updated_at":
-        default:
-          return b.updated_at.localeCompare(a.updated_at);
-      }
-    });
-  }, [exports, search, sortBy]);
+  // Reset to page 1 when sort changes
+  useEffect(() => {
+    setPage(1);
+  }, [sortBy]);
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
@@ -69,7 +71,7 @@ export function Dashboard() {
         <div>
           <h1 className="text-2xl font-bold text-foreground">Exports</h1>
           <p className="text-sm text-muted-foreground">
-            {exports.length} export{exports.length !== 1 ? "s" : ""} in database
+            {total} export{total !== 1 ? "s" : ""} in database
           </p>
         </div>
         <button
@@ -116,9 +118,9 @@ export function Dashboard() {
         <div className="flex items-center justify-center py-20">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
         </div>
-      ) : filtered.length === 0 ? (
+      ) : exports.length === 0 ? (
         <div className="flex flex-col items-center gap-4 rounded-xl border-2 border-dashed border-border py-20">
-          {exports.length === 0 ? (
+          {total === 0 && !debouncedSearch ? (
             <>
               <Database size={48} className="text-muted-foreground/50" />
               <div className="text-center">
@@ -141,17 +143,42 @@ export function Dashboard() {
             <>
               <Search size={48} className="text-muted-foreground/50" />
               <p className="text-muted-foreground">
-                No exports match "{search}"
+                No exports match "{debouncedSearch}"
               </p>
             </>
           )}
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((exp) => (
-            <ExportCard key={exp.id} data={exp} />
-          ))}
-        </div>
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {exports.map((exp) => (
+              <ExportCard key={exp.id} data={exp} />
+            ))}
+          </div>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="mt-6 flex items-center justify-center gap-3">
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1}
+                className="inline-flex items-center gap-1 rounded-lg border border-input bg-background px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-40"
+              >
+                <ChevronLeft size={14} /> Previous
+              </button>
+              <span className="text-sm text-muted-foreground">
+                Page {page} of {totalPages}
+              </span>
+              <button
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages}
+                className="inline-flex items-center gap-1 rounded-lg border border-input bg-background px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-40"
+              >
+                Next <ChevronRight size={14} />
+              </button>
+            </div>
+          )}
+        </>
       )}
 
       <ImportDialog
