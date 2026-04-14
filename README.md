@@ -4,13 +4,18 @@ A modern local web app to browse, import, and analyze nested JSON export files w
 
 ## Features
 
-- **Dashboard** — grid of import cards with PII score badges, file counts, and sizes; searchable and sortable by name, date, PII score, or size
+- **Dashboard** — grid of import cards with PII score badges, file counts, and sizes; searchable and sortable by name, date, PII score, or size; one-click Print (browser save-as-PDF) and Compare
 - **Import** — drag-and-drop or file picker; schema validation rejects non-conforming JSON; overwrite confirmation flow
 - **Export detail view** — interactive file tree, stat cards, and PII findings table with filtering, sorting, and JSON/CSV export
+- **Compare two exports** — side-by-side diff showing added, removed, and resized paths, with a net-size-delta summary
+- **Settings** — edit, disable, or add PII patterns (label, category, severity, weighted score, keyword list) through the UI; "Rescan all" applies new rules to existing imports
 - **Charts** — donut chart for file type distribution, horizontal bar chart for PII categories by weighted score
-- **Expanded PII detection** — 28 keyword-based patterns across 12 categories (legal, government ID, personal identifiers, contact info, tax/payroll, financial, health, employment, education, credentials, IT security) with density-weighted scoring
+- **Expanded PII detection** — 29 keyword-based patterns across 12 categories (legal, government ID, personal identifiers, contact info, tax/payroll, financial, health, employment, education, credentials, IT security) with density-weighted scoring. Patterns live in SQLite and are editable.
+- **Startup skip** — `data/*.json` files are hashed on startup; unchanged files are skipped (no reimport), keeping boot fast even with a large `data/` directory
 - **SQLite database** — all imported exports stored with full tree and PII signals; enables fast listing, searching, and querying across imports
 - **Dark / light mode** — toggle in the top nav; respects system preference on first visit
+- **Keyboard shortcuts** — `?` opens a cheatsheet; `g d / g s / g c` navigate to dashboard / settings / compare; `⌘K` or `/` focuses search
+- **Error boundary + toasts** — graceful error UI and non-blocking notifications
 - **Single-command startup** — `python3 app.py` serves the pre-built React frontend and API
 
 ## Tech stack
@@ -106,9 +111,19 @@ Files that do not match this schema are rejected with a descriptive error messag
 | -------- | --------------------- | ------------------------------------------- |
 | `GET`    | `/api/exports`        | List all imports with metadata               |
 | `GET`    | `/api/export/<id>`    | Full detail: tree, PII signals, stats        |
+| `GET`    | `/api/export/<id>/children` | Lazy tree children (paginated)        |
+| `GET`    | `/api/export/<id>/search?q=` | Search names and paths inside an export |
+| `GET`    | `/api/export/<id>/files-by-type?ext=` | All files of an extension    |
 | `POST`   | `/api/import`         | Import a JSON file (`filename`, `content`, optional `overwrite`) |
 | `DELETE` | `/api/export/<id>`    | Delete an import from DB and `data/`         |
-| `GET`    | `/api/pii-patterns`   | List all PII detection patterns              |
+| `GET`    | `/api/diff?a=&b=`     | Diff two exports (added / removed / size changes) |
+| `GET`    | `/api/pii-patterns`   | List patterns                                |
+| `POST`   | `/api/pii-patterns`   | Create a new pattern                         |
+| `PUT`    | `/api/pii-patterns/<id>` | Update (full) or toggle (`{enabled}`)     |
+| `DELETE` | `/api/pii-patterns/<id>` | Delete                                    |
+| `POST`   | `/api/pii-patterns/reset` | Reset patterns to builtin defaults       |
+| `POST`   | `/api/pii-rescan`     | Recompute PII for all imports                |
+| `POST`   | `/api/pii-rescan/<id>`| Recompute PII for one import                 |
 | `GET`    | `/api/export?file=<name>` | Legacy: load raw JSON by filename        |
 
 ## PII detection
@@ -134,17 +149,35 @@ The risk score (0–100) uses weighted pattern scores, category breadth, and den
 
 ```
 .
-├── app.py                    # Python backend + SQLite + HTTP server
-├── data/                     # Raw JSON files (backup)
-├── db/                       # SQLite database (auto-created)
+├── app.py                    # Thin launcher → backend.server.main
+├── backend/                  # Python API package
+│   ├── config.py             # Paths, host/port, limits
+│   ├── db.py                 # SQLite + migrations
+│   ├── pii.py                # Pattern engine (DB-backed)
+│   ├── importer.py           # Schema validation, store_export, startup sync
+│   ├── handlers.py           # HTTP handler + route dispatch
+│   └── server.py             # Main entry (ThreadingHTTPServer)
+├── tests/                    # stdlib unittest suite
+├── data/                     # Raw JSON files (backup + startup sync source)
+├── db/                       # SQLite database (auto-created, gitignored)
 ├── web/                      # Built React app (served by Python)
 ├── frontend/                 # React source code
 │   ├── src/
 │   │   ├── App.tsx           # Router + layout shell
-│   │   ├── pages/            # Dashboard, ExportDetail
-│   │   ├── components/       # ExportCard, TreeView, Charts, PiiTable, etc.
+│   │   ├── pages/            # Dashboard, ExportDetail, Settings, Diff
+│   │   ├── components/       # TreeView, Charts, PiiTable, ErrorBoundary, ShortcutsModal, etc.
+│   │   ├── hooks/            # useToast, useHotkeys
 │   │   └── lib/              # API client, utils, theme
 │   ├── vite.config.ts
 │   └── package.json
+├── CLAUDE.md                 # Agent / contributor guide
 └── README.md
+```
+
+## Testing
+
+```bash
+python3 -m unittest discover tests    # backend unit tests
+cd frontend && npx tsc -b             # TypeScript type-check
+cd frontend && npm run lint           # ESLint
 ```

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { Link } from "react-router-dom";
 import {
   Search,
   Plus,
@@ -12,6 +13,8 @@ import {
   HardDrive,
   ShieldAlert,
   Command,
+  Printer,
+  GitCompare,
 } from "lucide-react";
 import { fetchExports, fetchOverview, type ExportSummary, type OverviewStats } from "@/lib/api";
 import { formatSize, bandColor, cn } from "@/lib/utils";
@@ -108,13 +111,29 @@ export function Dashboard() {
             {total} export{total !== 1 ? "s" : ""} in database
           </p>
         </div>
-        <button
-          onClick={() => setImportOpen(true)}
-          className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
-        >
-          <Plus size={16} />
-          Import JSON
-        </button>
+        <div className="flex items-center gap-2 print:hidden">
+          <Link
+            to="/diff"
+            className="inline-flex items-center gap-2 rounded-lg border border-input bg-background px-3 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+          >
+            <GitCompare size={14} />
+            Compare
+          </Link>
+          <button
+            onClick={() => window.print()}
+            className="inline-flex items-center gap-2 rounded-lg border border-input bg-background px-3 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+          >
+            <Printer size={14} />
+            Print
+          </button>
+          <button
+            onClick={() => setImportOpen(true)}
+            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
+          >
+            <Plus size={16} />
+            Import JSON
+          </button>
+        </div>
       </div>
 
       {/* Overview stats */}
@@ -184,7 +203,7 @@ export function Dashboard() {
       )}
 
       {/* Search and sort bar */}
-      <div className="mb-5 flex flex-col gap-3 sm:flex-row">
+      <div className="mb-5 flex flex-col gap-3 sm:flex-row print:hidden">
         <div className="relative flex-1">
           <Search
             size={16}
@@ -254,9 +273,11 @@ export function Dashboard() {
         </div>
       ) : (
         <>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 print:grid-cols-1 print:gap-2">
             {exports.map((exp) => (
-              <ExportCard key={exp.id} data={exp} />
+              <div key={exp.id} className="print-card">
+                <ExportCard data={exp} />
+              </div>
             ))}
           </div>
 
