@@ -8,9 +8,12 @@ import {
   YAxis,
   Tooltip,
   ResponsiveContainer,
+  AreaChart,
+  Area,
   type PieLabelRenderProps,
 } from "recharts";
-import type { PiiSignal, FileTypeCount } from "@/lib/api";
+import type { PiiSignal, FileTypeCount, LargestFile, DepthCount } from "@/lib/api";
+import { formatSize } from "@/lib/utils";
 
 const CHART_COLORS = [
   "var(--color-chart-1)",
@@ -22,6 +25,17 @@ const CHART_COLORS = [
   "var(--color-chart-7)",
   "var(--color-chart-8)",
 ];
+
+const tooltipStyle = {
+  backgroundColor: "var(--color-card)",
+  border: "1px solid var(--color-border)",
+  borderRadius: "8px",
+  color: "var(--color-card-foreground)",
+};
+
+/* ------------------------------------------------------------------ */
+/*  File Type Distribution (donut)                                     */
+/* ------------------------------------------------------------------ */
 
 interface FileTypeChartProps {
   data: FileTypeCount[];
@@ -61,18 +75,15 @@ export function FileTypeChart({ data }: FileTypeChartProps) {
             />
           ))}
         </Pie>
-        <Tooltip
-          contentStyle={{
-            backgroundColor: "var(--color-card)",
-            border: "1px solid var(--color-border)",
-            borderRadius: "8px",
-            color: "var(--color-card-foreground)",
-          }}
-        />
+        <Tooltip contentStyle={tooltipStyle} />
       </PieChart>
     </ResponsiveContainer>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/*  PII Categories by Score (horizontal bar)                           */
+/* ------------------------------------------------------------------ */
 
 interface PiiCategoryChartProps {
   signals: PiiSignal[];
@@ -115,12 +126,7 @@ export function PiiCategoryChart({ signals }: PiiCategoryChartProps) {
           tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
         />
         <Tooltip
-          contentStyle={{
-            backgroundColor: "var(--color-card)",
-            border: "1px solid var(--color-border)",
-            borderRadius: "8px",
-            color: "var(--color-card-foreground)",
-          }}
+          contentStyle={tooltipStyle}
           formatter={(...args: unknown[]) => {
             const value = args[0];
             const p = args[2] as { payload?: { fullName?: string; count?: number } } | undefined;
@@ -139,6 +145,166 @@ export function PiiCategoryChart({ signals }: PiiCategoryChartProps) {
           ))}
         </Bar>
       </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  File Size by Extension (horizontal bar)                            */
+/* ------------------------------------------------------------------ */
+
+interface FileSizeByTypeChartProps {
+  data: FileTypeCount[];
+}
+
+export function FileSizeByTypeChart({ data }: FileSizeByTypeChartProps) {
+  if (!data || data.length === 0) {
+    return (
+      <p className="py-8 text-center text-sm text-muted-foreground">
+        No file size data available.
+      </p>
+    );
+  }
+
+  return (
+    <ResponsiveContainer width="100%" height={250}>
+      <BarChart data={data} layout="vertical" margin={{ left: 10 }}>
+        <XAxis
+          type="number"
+          tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
+          tickFormatter={(v: number) => formatSize(v)}
+        />
+        <YAxis
+          type="category"
+          dataKey="name"
+          width={60}
+          tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
+        />
+        <Tooltip
+          contentStyle={tooltipStyle}
+          formatter={(...args: unknown[]) => {
+            const value = args[0] as number;
+            return [formatSize(value), "Total Size"];
+          }}
+        />
+        <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+          {data.map((_, i) => (
+            <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+          ))}
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Top Largest Files (horizontal bar)                                 */
+/* ------------------------------------------------------------------ */
+
+interface TopLargestFilesChartProps {
+  data: LargestFile[];
+}
+
+export function TopLargestFilesChart({ data }: TopLargestFilesChartProps) {
+  if (!data || data.length === 0) {
+    return (
+      <p className="py-8 text-center text-sm text-muted-foreground">
+        No files to display.
+      </p>
+    );
+  }
+
+  const chartData = data.map((f) => ({
+    name: f.name.length > 25 ? f.name.slice(0, 23) + "..." : f.name,
+    fullName: f.name,
+    path: f.path,
+    value: f.size,
+  }));
+
+  return (
+    <ResponsiveContainer width="100%" height={250}>
+      <BarChart data={chartData} layout="vertical" margin={{ left: 10 }}>
+        <XAxis
+          type="number"
+          tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
+          tickFormatter={(v: number) => formatSize(v)}
+        />
+        <YAxis
+          type="category"
+          dataKey="name"
+          width={140}
+          tick={{ fontSize: 10, fill: "var(--color-muted-foreground)" }}
+        />
+        <Tooltip
+          contentStyle={tooltipStyle}
+          formatter={(...args: unknown[]) => {
+            const value = args[0] as number;
+            const p = args[2] as { payload?: { path?: string } } | undefined;
+            return [
+              `${formatSize(value)}`,
+              p?.payload?.path ?? "",
+            ];
+          }}
+        />
+        <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+          {chartData.map((_, i) => (
+            <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+          ))}
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Depth Distribution (area chart)                                    */
+/* ------------------------------------------------------------------ */
+
+interface DepthDistributionChartProps {
+  data: DepthCount[];
+}
+
+export function DepthDistributionChart({ data }: DepthDistributionChartProps) {
+  if (!data || data.length === 0) {
+    return (
+      <p className="py-8 text-center text-sm text-muted-foreground">
+        No depth data available.
+      </p>
+    );
+  }
+
+  const chartData = data.map((d) => ({
+    name: `Level ${d.depth}`,
+    depth: d.depth,
+    count: d.count,
+  }));
+
+  return (
+    <ResponsiveContainer width="100%" height={250}>
+      <AreaChart data={chartData} margin={{ left: 0, right: 10 }}>
+        <XAxis
+          dataKey="name"
+          tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
+        />
+        <YAxis
+          tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
+        />
+        <Tooltip
+          contentStyle={tooltipStyle}
+          formatter={(...args: unknown[]) => {
+            const value = args[0] as number;
+            return [`${value} nodes`, "Count"];
+          }}
+        />
+        <Area
+          type="monotone"
+          dataKey="count"
+          stroke="var(--color-chart-1)"
+          fill="var(--color-chart-1)"
+          fillOpacity={0.2}
+          strokeWidth={2}
+        />
+      </AreaChart>
     </ResponsiveContainer>
   );
 }

@@ -10,9 +10,12 @@ import {
   FileSpreadsheet,
   FileArchive,
   Loader2,
+  ChevronsDown,
 } from "lucide-react";
 import { fetchTreeChildren, type LazyTreeNode } from "@/lib/api";
 import { formatSize, cn } from "@/lib/utils";
+
+const PAGE_SIZE = 100;
 
 function getFileIcon(name: string) {
   const ext = name.split(".").pop()?.toLowerCase() || "";
@@ -70,6 +73,9 @@ function LazyTreeNodeItem({ node, depth, filter, exportId }: LazyTreeNodeItemPro
   const [children, setChildren] = useState<LazyTreeNode[]>(node.children || []);
   const [loaded, setLoaded] = useState(node.loaded || false);
   const [loading, setLoading] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [totalCount, setTotalCount] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const isDir = node.is_dir;
   const Icon = isDir ? Folder : getFileIcon(node.name);
@@ -85,8 +91,10 @@ function LazyTreeNodeItem({ node, depth, filter, exportId }: LazyTreeNodeItemPro
     if (!loaded) {
       setLoading(true);
       try {
-        const data = await fetchTreeChildren(exportId, node.id);
-        setChildren(data);
+        const result = await fetchTreeChildren(exportId, node.id, 0, PAGE_SIZE);
+        setChildren(result.children);
+        setHasMore(result.has_more);
+        setTotalCount(result.total_count);
         setLoaded(true);
         setOpen(true);
       } catch (e) {
@@ -98,6 +106,20 @@ function LazyTreeNodeItem({ node, depth, filter, exportId }: LazyTreeNodeItemPro
       setOpen(!open);
     }
   }, [hasChildren, loaded, open, exportId, node.id]);
+
+  const handleLoadMore = useCallback(async () => {
+    setLoadingMore(true);
+    try {
+      const result = await fetchTreeChildren(exportId, node.id, children.length, PAGE_SIZE);
+      setChildren((prev) => [...prev, ...result.children]);
+      setHasMore(result.has_more);
+      setTotalCount(result.total_count);
+    } catch (e) {
+      console.error("Failed to load more children:", e);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [exportId, node.id, children.length]);
 
   return (
     <div>
@@ -154,6 +176,21 @@ function LazyTreeNodeItem({ node, depth, filter, exportId }: LazyTreeNodeItemPro
                 exportId={exportId}
               />
             ))}
+          {hasMore && (
+            <button
+              onClick={handleLoadMore}
+              disabled={loadingMore}
+              className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-primary transition-colors hover:bg-accent"
+              style={{ paddingLeft: `${(depth + 1) * 16 + 8}px` }}
+            >
+              {loadingMore ? (
+                <Loader2 size={12} className="shrink-0 animate-spin" />
+              ) : (
+                <ChevronsDown size={12} className="shrink-0" />
+              )}
+              Load more ({totalCount - children.length} remaining)
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -168,14 +205,35 @@ interface LazyTreeViewProps {
 export function LazyTreeView({ exportId, filter }: LazyTreeViewProps) {
   const [roots, setRoots] = useState<LazyTreeNode[]>([]);
   const [loading, setLoading] = useState(true);
+  const [hasMore, setHasMore] = useState(false);
+  const [totalCount, setTotalCount] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   useEffect(() => {
     setLoading(true);
-    fetchTreeChildren(exportId)
-      .then(setRoots)
+    fetchTreeChildren(exportId, undefined, 0, PAGE_SIZE)
+      .then((result) => {
+        setRoots(result.children);
+        setHasMore(result.has_more);
+        setTotalCount(result.total_count);
+      })
       .catch((e) => console.error("Failed to load tree roots:", e))
       .finally(() => setLoading(false));
   }, [exportId]);
+
+  const handleLoadMore = useCallback(async () => {
+    setLoadingMore(true);
+    try {
+      const result = await fetchTreeChildren(exportId, undefined, roots.length, PAGE_SIZE);
+      setRoots((prev) => [...prev, ...result.children]);
+      setHasMore(result.has_more);
+      setTotalCount(result.total_count);
+    } catch (e) {
+      console.error("Failed to load more roots:", e);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [exportId, roots.length]);
 
   if (loading) {
     return (
@@ -210,6 +268,20 @@ export function LazyTreeView({ exportId, filter }: LazyTreeViewProps) {
               exportId={exportId}
             />
           ))}
+        {hasMore && (
+          <button
+            onClick={handleLoadMore}
+            disabled={loadingMore}
+            className="flex w-full items-center justify-center gap-1.5 rounded-md px-2 py-2 text-xs text-primary transition-colors hover:bg-accent"
+          >
+            {loadingMore ? (
+              <Loader2 size={12} className="shrink-0 animate-spin" />
+            ) : (
+              <ChevronsDown size={12} className="shrink-0" />
+            )}
+            Load more ({totalCount - roots.length} remaining)
+          </button>
+        )}
       </div>
     </div>
   );
