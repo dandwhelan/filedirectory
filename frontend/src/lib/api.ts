@@ -89,6 +89,19 @@ export interface FileByType {
   size: number;
 }
 
+export interface SearchResult {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  size: number;
+}
+
+export interface SearchResponse {
+  query: string;
+  results: SearchResult[];
+  count: number;
+}
+
 export interface FilesByTypeResult {
   extension: string;
   files: FileByType[];
@@ -164,6 +177,17 @@ export async function deleteExport(id: number): Promise<void> {
 export async function fetchOverview(): Promise<OverviewStats> {
   const res = await fetch(`${API_BASE}/overview`);
   if (!res.ok) throw new Error("Failed to load overview");
+  return res.json();
+}
+
+export async function searchExport(
+  exportId: number,
+  query: string
+): Promise<SearchResponse> {
+  const res = await fetch(
+    `${API_BASE}/export/${exportId}/search?q=${encodeURIComponent(query)}`
+  );
+  if (!res.ok) throw new Error("Failed to search");
   return res.json();
 }
 

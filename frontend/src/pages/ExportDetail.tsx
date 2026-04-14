@@ -22,6 +22,7 @@ import {
 import { PiiTable } from "@/components/PiiTable";
 import { LazyTreeView } from "@/components/TreeView";
 import { FileListPanel } from "@/components/FileListPanel";
+import { SearchPanel } from "@/components/SearchPanel";
 
 export function ExportDetail() {
   const { id } = useParams<{ id: string }>();
@@ -137,6 +138,14 @@ export function ExportDetail() {
           piiBand={data.pii_band}
           totalNodes={data.file_count + data.dir_count}
         />
+      </div>
+
+      {/* File Search */}
+      <div className="mb-6">
+        <h3 className="mb-3 text-lg font-semibold text-foreground">
+          Search Files
+        </h3>
+        <SearchPanel exportId={data.id} />
       </div>
 
       {/* Charts — Row 1 */}
