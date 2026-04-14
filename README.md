@@ -34,23 +34,47 @@ Open: <http://127.0.0.1:8000>
 
 Any `.json` files already in `data/` are automatically imported into the database on startup.
 
-## Frontend development
+## Development setup
 
-To work on the React frontend with hot reload:
+### Single command (recommended)
+
+Start both the backend API and frontend dev server together:
 
 ```bash
+# Option A: using npm (requires one-time npm install at root)
+npm install
+npm run dev
+
+# Option B: using Python only (no extra root dependencies)
+python3 dev.py
+```
+
+Both options start:
+- **Backend** at `http://127.0.0.1:8000` (Python API + SQLite)
+- **Frontend** at `http://localhost:5173` (Vite dev server with hot reload)
+
+The Vite dev server proxies `/api` requests to the backend automatically.
+
+### Manual (two terminals)
+
+```bash
+# Terminal 1: backend
+python3 app.py
+
+# Terminal 2: frontend
 cd frontend
 npm install
 npm run dev
 ```
 
-The Vite dev server proxies `/api` requests to `http://127.0.0.1:8000`, so run the Python backend in a separate terminal.
+### Build for production
 
-To build for production (outputs to `web/`):
+Compiles the React app into `web/`, which the Python server serves directly:
 
 ```bash
-cd frontend
-npm run build
+npm run build        # from root
+# or
+cd frontend && npm run build
 ```
 
 ## JSON export schema
