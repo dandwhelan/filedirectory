@@ -12,7 +12,13 @@ import {
 import { fetchExportDetail, deleteExport, type ExportDetail as ExportDetailType } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import { StatsRow } from "@/components/StatsRow";
-import { FileTypeChart, PiiCategoryChart } from "@/components/Charts";
+import {
+  FileTypeChart,
+  PiiCategoryChart,
+  FileSizeByTypeChart,
+  TopLargestFilesChart,
+  DepthDistributionChart,
+} from "@/components/Charts";
 import { PiiTable } from "@/components/PiiTable";
 import { LazyTreeView } from "@/components/TreeView";
 
@@ -125,14 +131,40 @@ export function ExportDetail() {
         />
       </div>
 
-      {/* Charts */}
-      <div className="mb-6 grid gap-4 lg:grid-cols-2">
+      {/* Charts — Row 1 */}
+      <div className="mb-4 grid gap-4 lg:grid-cols-2">
         <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
           <h3 className="mb-2 text-sm font-semibold text-card-foreground">
             File Type Distribution
           </h3>
           <FileTypeChart data={data.file_type_counts} />
         </div>
+        <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+          <h3 className="mb-2 text-sm font-semibold text-card-foreground">
+            Storage by File Type
+          </h3>
+          <FileSizeByTypeChart data={data.file_size_by_type} />
+        </div>
+      </div>
+
+      {/* Charts — Row 2 */}
+      <div className="mb-4 grid gap-4 lg:grid-cols-2">
+        <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+          <h3 className="mb-2 text-sm font-semibold text-card-foreground">
+            Top Largest Files
+          </h3>
+          <TopLargestFilesChart data={data.top_largest_files} />
+        </div>
+        <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+          <h3 className="mb-2 text-sm font-semibold text-card-foreground">
+            Tree Depth Distribution
+          </h3>
+          <DepthDistributionChart data={data.depth_distribution} />
+        </div>
+      </div>
+
+      {/* Charts — Row 3 */}
+      <div className="mb-6 grid gap-4 lg:grid-cols-2">
         <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
           <h3 className="mb-2 text-sm font-semibold text-card-foreground">
             PII Categories by Weighted Score

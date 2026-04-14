@@ -37,9 +37,23 @@ export interface FileTypeCount {
   value: number;
 }
 
+export interface LargestFile {
+  name: string;
+  path: string;
+  size: number;
+}
+
+export interface DepthCount {
+  depth: number;
+  count: number;
+}
+
 export interface ExportDetail extends ExportSummary {
   pii_signals: PiiSignal[];
   file_type_counts: FileTypeCount[];
+  file_size_by_type: FileTypeCount[];
+  top_largest_files: LargestFile[];
+  depth_distribution: DepthCount[];
 }
 
 export interface PaginatedExports {
@@ -85,15 +99,25 @@ export async function fetchExportDetail(id: number): Promise<ExportDetail> {
   return res.json();
 }
 
+export interface TreeChildrenResult {
+  children: LazyTreeNode[];
+  total_count: number;
+  has_more: boolean;
+}
+
 export async function fetchTreeChildren(
   exportId: number,
-  parentId?: number
-): Promise<LazyTreeNode[]> {
-  const qs = parentId != null ? `?parent_id=${parentId}` : "";
-  const res = await fetch(`${API_BASE}/export/${exportId}/children${qs}`);
+  parentId?: number,
+  offset: number = 0,
+  limit: number = 100
+): Promise<TreeChildrenResult> {
+  const qs = new URLSearchParams();
+  if (parentId != null) qs.set("parent_id", String(parentId));
+  qs.set("limit", String(limit));
+  qs.set("offset", String(offset));
+  const res = await fetch(`${API_BASE}/export/${exportId}/children?${qs}`);
   if (!res.ok) throw new Error("Failed to load tree nodes");
-  const data = await res.json();
-  return data.children;
+  return res.json();
 }
 
 export async function importExport(

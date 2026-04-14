@@ -73,6 +73,8 @@ def init_db():
         );
 
         CREATE INDEX IF NOT EXISTS idx_nodes_export ON nodes(export_id);
+        CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id);
+        CREATE INDEX IF NOT EXISTS idx_nodes_export_parent ON nodes(export_id, parent_id);
         CREATE INDEX IF NOT EXISTS idx_pii_export ON pii_signals(export_id);
         CREATE INDEX IF NOT EXISTS idx_nodes_path ON nodes(path);
     """)
@@ -165,6 +167,43 @@ PII_PATTERNS: list[dict] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Common file extensions for PII scanning (business / document files).
+# Source code, config, and dev artifacts are excluded.
+# ---------------------------------------------------------------------------
+
+PII_RELEVANT_EXTENSIONS = {
+    # Documents
+    "pdf", "doc", "docx", "txt", "rtf", "odt", "pages", "wpd",
+    # Presentations
+    "ppt", "pptx", "odp", "key",
+    # Spreadsheets
+    "xls", "xlsx", "csv", "ods", "numbers", "tsv",
+    # Images
+    "jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "svg", "webp", "heic", "raw", "ico",
+    # Archives (may contain sensitive docs)
+    "zip", "rar", "7z", "tar", "gz", "bz2",
+    # Email
+    "eml", "msg", "pst", "mbox", "ost",
+    # Database files
+    "mdb", "accdb", "sql", "db", "sqlite", "dbf",
+    # Media
+    "mp3", "mp4", "avi", "mov", "wav", "wmv", "flv", "mkv", "m4a", "aac",
+}
+
+
+def _is_pii_relevant(node: dict) -> bool:
+    """Return True if a node should be considered for PII scanning."""
+    if node.get("is_dir"):
+        return True  # Always scan directory names
+    name = node.get("name", "")
+    idx = name.rfind(".")
+    if idx <= 0:
+        return True  # No extension — could be anything
+    ext = name[idx + 1:].lower()
+    return ext in PII_RELEVANT_EXTENSIONS
+
+
 def _text_matches_pattern(text: str, pattern: dict) -> bool:
     text_lower = text.lower()
     for kw in pattern["keywords"]:
@@ -182,9 +221,14 @@ def _flatten_nodes(children: list[dict], depth: int = 0, parent_id: int | None =
 
 
 def _compute_pii(nodes_flat: list[dict]) -> tuple[list[dict], int, str]:
-    """Run PII detection, return (signals_list, normalized_score, band)."""
+    """Run PII detection, return (signals_list, normalized_score, band).
+
+    Only scans directories and common file types (documents, images,
+    spreadsheets, etc.).  Source code and dev config files are skipped.
+    """
+    relevant_nodes = [n for n in nodes_flat if _is_pii_relevant(n)]
     signals: list[dict] = []
-    for node in nodes_flat:
+    for node in relevant_nodes:
         text = f"{node.get('name', '')} {node.get('path', '')}"
         for pat in PII_PATTERNS:
             if _text_matches_pattern(text, pat):
@@ -198,7 +242,7 @@ def _compute_pii(nodes_flat: list[dict]) -> tuple[list[dict], int, str]:
 
     total_raw = sum(s["score"] for s in signals)
     categories = set(s["category"] for s in signals)
-    total_nodes = max(len(nodes_flat), 1)
+    total_nodes = max(len(relevant_nodes), 1)
 
     # Density bonus: many PII hits in small tree = much higher risk
     density = len(signals) / total_nodes
@@ -498,18 +542,45 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
 
         # File type distribution (computed from nodes table)
         file_rows = conn.execute(
-            "SELECT name FROM nodes WHERE export_id = ? AND is_dir = 0",
+            "SELECT name, size FROM nodes WHERE export_id = ? AND is_dir = 0",
             (export_id,)
         ).fetchall()
         ext_counts: dict[str, int] = {}
+        ext_sizes: dict[str, int] = {}
         for r in file_rows:
             name = r["name"]
             idx = name.rfind(".")
             ext = name[idx + 1:].lower() if idx > 0 else "other"
             ext_counts[ext] = ext_counts.get(ext, 0) + 1
+            ext_sizes[ext] = ext_sizes.get(ext, 0) + r["size"]
+
         top_exts = sorted(ext_counts.items(), key=lambda x: x[1], reverse=True)[:8]
         export_data["file_type_counts"] = [
             {"name": f".{ext}", "value": cnt} for ext, cnt in top_exts
+        ]
+
+        # File size by extension (top 10)
+        top_size_exts = sorted(ext_sizes.items(), key=lambda x: x[1], reverse=True)[:10]
+        export_data["file_size_by_type"] = [
+            {"name": f".{ext}", "value": sz} for ext, sz in top_size_exts
+        ]
+
+        # Top 10 largest individual files
+        largest_rows = conn.execute(
+            "SELECT name, path, size FROM nodes WHERE export_id = ? AND is_dir = 0 ORDER BY size DESC LIMIT 10",
+            (export_id,)
+        ).fetchall()
+        export_data["top_largest_files"] = [
+            {"name": r["name"], "path": r["path"], "size": r["size"]} for r in largest_rows
+        ]
+
+        # Depth distribution
+        depth_rows = conn.execute(
+            "SELECT depth, COUNT(*) as count FROM nodes WHERE export_id = ? GROUP BY depth ORDER BY depth",
+            (export_id,)
+        ).fetchall()
+        export_data["depth_distribution"] = [
+            {"depth": r["depth"], "count": r["count"]} for r in depth_rows
         ]
 
         conn.close()
@@ -519,6 +590,8 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
 
     def _handle_export_children(self, export_id: int, params: dict):
         parent_id_str = params.get("parent_id", [""])[0]
+        limit = min(500, max(1, int(params.get("limit", ["100"])[0])))
+        offset = max(0, int(params.get("offset", ["0"])[0]))
 
         conn = get_db()
 
@@ -535,21 +608,31 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
                 conn.close()
                 self._error_response(HTTPStatus.BAD_REQUEST, "Invalid parent_id")
                 return
+            total_count = conn.execute(
+                "SELECT COUNT(*) FROM nodes WHERE export_id = ? AND parent_id = ?",
+                (export_id, parent_id)
+            ).fetchone()[0]
             rows = conn.execute("""
                 SELECT n.id, n.name, n.path, n.is_dir, n.size,
                        EXISTS(SELECT 1 FROM nodes c WHERE c.parent_id = n.id) AS has_children
                 FROM nodes n
                 WHERE n.export_id = ? AND n.parent_id = ?
                 ORDER BY n.is_dir DESC, n.name ASC
-            """, (export_id, parent_id)).fetchall()
+                LIMIT ? OFFSET ?
+            """, (export_id, parent_id, limit, offset)).fetchall()
         else:
+            total_count = conn.execute(
+                "SELECT COUNT(*) FROM nodes WHERE export_id = ? AND parent_id IS NULL",
+                (export_id,)
+            ).fetchone()[0]
             rows = conn.execute("""
                 SELECT n.id, n.name, n.path, n.is_dir, n.size,
                        EXISTS(SELECT 1 FROM nodes c WHERE c.parent_id = n.id) AS has_children
                 FROM nodes n
                 WHERE n.export_id = ? AND n.parent_id IS NULL
                 ORDER BY n.is_dir DESC, n.name ASC
-            """, (export_id,)).fetchall()
+                LIMIT ? OFFSET ?
+            """, (export_id, limit, offset)).fetchall()
 
         conn.close()
 
@@ -564,7 +647,11 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
             }
             for r in rows
         ]
-        self._json_response({"children": children})
+        self._json_response({
+            "children": children,
+            "total_count": total_count,
+            "has_more": offset + limit < total_count,
+        })
 
     # -- Legacy: load by filename --
 
