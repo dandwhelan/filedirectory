@@ -73,6 +73,28 @@ export interface ImportResult {
   code?: string;
 }
 
+export interface OverviewStats {
+  export_count: number;
+  total_files: number;
+  total_dirs: number;
+  total_size: number;
+  avg_pii_score: number;
+  pii_band_distribution: Record<string, number>;
+  top_file_types: FileTypeCount[];
+}
+
+export interface FileByType {
+  name: string;
+  path: string;
+  size: number;
+}
+
+export interface FilesByTypeResult {
+  extension: string;
+  files: FileByType[];
+  count: number;
+}
+
 const API_BASE = "/api";
 
 export async function fetchExports(params?: {
@@ -137,4 +159,21 @@ export async function importExport(
 export async function deleteExport(id: number): Promise<void> {
   const res = await fetch(`${API_BASE}/export/${id}`, { method: "DELETE" });
   if (!res.ok) throw new Error("Failed to delete export");
+}
+
+export async function fetchOverview(): Promise<OverviewStats> {
+  const res = await fetch(`${API_BASE}/overview`);
+  if (!res.ok) throw new Error("Failed to load overview");
+  return res.json();
+}
+
+export async function fetchFilesByType(
+  exportId: number,
+  ext: string
+): Promise<FilesByTypeResult> {
+  const res = await fetch(
+    `${API_BASE}/export/${exportId}/files-by-type?ext=${encodeURIComponent(ext)}`
+  );
+  if (!res.ok) throw new Error("Failed to load files");
+  return res.json();
 }

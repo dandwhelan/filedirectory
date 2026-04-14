@@ -27,6 +27,10 @@ def get_db() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA cache_size=-8000")       # 8 MB page cache
+    conn.execute("PRAGMA mmap_size=67108864")      # 64 MB memory-mapped I/O
+    conn.execute("PRAGMA temp_store=MEMORY")       # temp tables in RAM
+    conn.execute("PRAGMA synchronous=NORMAL")      # faster writes (safe with WAL)
     return conn
 
 
@@ -75,6 +79,7 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_nodes_export ON nodes(export_id);
         CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id);
         CREATE INDEX IF NOT EXISTS idx_nodes_export_parent ON nodes(export_id, parent_id);
+        CREATE INDEX IF NOT EXISTS idx_nodes_export_isdir ON nodes(export_id, is_dir);
         CREATE INDEX IF NOT EXISTS idx_pii_export ON pii_signals(export_id);
         CREATE INDEX IF NOT EXISTS idx_nodes_path ON nodes(path);
     """)
@@ -361,12 +366,15 @@ def _store_export(conn: sqlite3.Connection, filename: str, data: dict, overwrite
 
     _insert_nodes(data.get("children", []))
 
-    # Store PII signals
-    for sig in signals:
-        conn.execute("""
+    # Store PII signals (batch insert)
+    if signals:
+        conn.executemany("""
             INSERT INTO pii_signals (export_id, pattern_label, category, severity, score, location)
             VALUES (?, ?, ?, ?, ?, ?)
-        """, (export_id, sig["pattern_label"], sig["category"], sig["severity"], sig["score"], sig["location"]))
+        """, [
+            (export_id, s["pattern_label"], s["category"], s["severity"], s["score"], s["location"])
+            for s in signals
+        ])
 
     conn.commit()
 
@@ -409,6 +417,9 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         params = parse_qs(parsed.query)
 
+        if parsed.path == "/api/overview":
+            self._handle_overview()
+            return
         if parsed.path == "/api/exports":
             self._handle_exports_list(params)
             return
@@ -423,6 +434,10 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
                 # /api/export/<id>/children — lazy tree loading
                 if len(parts) >= 5 and parts[4] == "children":
                     self._handle_export_children(export_id, params)
+                    return
+                # /api/export/<id>/files-by-type?ext=pdf
+                if len(parts) >= 5 and parts[4] == "files-by-type":
+                    self._handle_files_by_type(export_id, params)
                     return
                 self._handle_export_detail(export_id)
                 return
@@ -515,6 +530,48 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
             "page": page,
             "per_page": per_page,
             "total_pages": total_pages,
+        })
+
+    # -- Dashboard overview (aggregate stats) --
+
+    def _handle_overview(self):
+        conn = get_db()
+
+        row = conn.execute("""
+            SELECT COUNT(*) as export_count,
+                   COALESCE(SUM(file_count), 0) as total_files,
+                   COALESCE(SUM(dir_count), 0) as total_dirs,
+                   COALESCE(SUM(total_size), 0) as total_size,
+                   COALESCE(ROUND(AVG(pii_score)), 0) as avg_pii_score
+            FROM exports
+        """).fetchone()
+
+        band_rows = conn.execute(
+            "SELECT pii_band, COUNT(*) as count FROM exports GROUP BY pii_band"
+        ).fetchall()
+
+        # Top file types across all exports
+        ext_rows = conn.execute(
+            "SELECT name FROM nodes WHERE is_dir = 0"
+        ).fetchall()
+        ext_counts: dict[str, int] = {}
+        for r in ext_rows:
+            name = r["name"]
+            idx = name.rfind(".")
+            ext = name[idx + 1:].lower() if idx > 0 else "other"
+            ext_counts[ext] = ext_counts.get(ext, 0) + 1
+        top_exts = sorted(ext_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+
+        conn.close()
+
+        self._json_response({
+            "export_count": row["export_count"],
+            "total_files": row["total_files"],
+            "total_dirs": row["total_dirs"],
+            "total_size": row["total_size"],
+            "avg_pii_score": int(row["avg_pii_score"]),
+            "pii_band_distribution": {r["pii_band"]: r["count"] for r in band_rows},
+            "top_file_types": [{"name": f".{ext}", "value": cnt} for ext, cnt in top_exts],
         })
 
     # -- Get single export detail (without full tree) --
@@ -651,6 +708,34 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
             "children": children,
             "total_count": total_count,
             "has_more": offset + limit < total_count,
+        })
+
+    # -- Files by extension type --
+
+    def _handle_files_by_type(self, export_id: int, params: dict):
+        ext = params.get("ext", [""])[0].strip().lower().lstrip(".")
+        if not ext:
+            self._error_response(HTTPStatus.BAD_REQUEST, "Missing ext parameter")
+            return
+
+        conn = get_db()
+        if not conn.execute("SELECT 1 FROM exports WHERE id = ?", (export_id,)).fetchone():
+            conn.close()
+            self._error_response(HTTPStatus.NOT_FOUND, "Export not found")
+            return
+
+        rows = conn.execute("""
+            SELECT name, path, size FROM nodes
+            WHERE export_id = ? AND is_dir = 0 AND LOWER(name) LIKE ?
+            ORDER BY name ASC
+            LIMIT 500
+        """, (export_id, f"%.{ext}")).fetchall()
+        conn.close()
+
+        self._json_response({
+            "extension": ext,
+            "files": [{"name": r["name"], "path": r["path"], "size": r["size"]} for r in rows],
+            "count": len(rows),
         })
 
     # -- Legacy: load by filename --
