@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import time
 from http import HTTPStatus
@@ -209,10 +210,19 @@ def _is_pii_relevant(node: dict) -> bool:
     return ext in PII_RELEVANT_EXTENSIONS
 
 
+# Pre-compile keyword regexes with word boundaries so short keywords like
+# "ein", "tin", "ach" do not match inside longer words (e.g. "Vereinbarung",
+# "Marketing").  This eliminates the vast majority of false positives.
+for _pat in PII_PATTERNS:
+    _pat["_re"] = [
+        re.compile(r"\b" + re.escape(kw) + r"\b", re.IGNORECASE)
+        for kw in _pat["keywords"]
+    ]
+
+
 def _text_matches_pattern(text: str, pattern: dict) -> bool:
-    text_lower = text.lower()
-    for kw in pattern["keywords"]:
-        if kw in text_lower:
+    for regex in pattern["_re"]:
+        if regex.search(text):
             return True
     return False
 
