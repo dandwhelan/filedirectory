@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Search,
   Plus,
@@ -7,8 +7,14 @@ import {
   FileJson,
   ChevronLeft,
   ChevronRight,
+  Files,
+  FolderOpen,
+  HardDrive,
+  ShieldAlert,
+  Command,
 } from "lucide-react";
-import { fetchExports, type ExportSummary } from "@/lib/api";
+import { fetchExports, fetchOverview, type ExportSummary, type OverviewStats } from "@/lib/api";
+import { formatSize, bandColor, cn } from "@/lib/utils";
 import { ExportCard } from "@/components/ExportCard";
 import { ImportDialog } from "@/components/ImportDialog";
 
@@ -24,6 +30,8 @@ export function Dashboard() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
+  const [overview, setOverview] = useState<OverviewStats | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   // Debounce search so we don't fire on every keystroke
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -34,6 +42,21 @@ export function Dashboard() {
     }, 300);
     return () => clearTimeout(timer);
   }, [search]);
+
+  // Keyboard shortcut: Ctrl+K or "/" to focus search
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.key === "k" && (e.metaKey || e.ctrlKey)) || (e.key === "/" && e.target === document.body)) {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
+      if (e.key === "Escape" && document.activeElement === searchRef.current) {
+        searchRef.current?.blur();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const loadExports = useCallback(async () => {
     setLoading(true);
@@ -57,6 +80,17 @@ export function Dashboard() {
 
   useEffect(() => {
     loadExports();
+  }, [loadExports]);
+
+  // Load overview stats
+  useEffect(() => {
+    fetchOverview().then(setOverview).catch(console.error);
+  }, []);
+
+  // Refresh overview after imports
+  const handleImported = useCallback(() => {
+    loadExports();
+    fetchOverview().then(setOverview).catch(console.error);
   }, [loadExports]);
 
   // Reset to page 1 when sort changes
@@ -83,6 +117,72 @@ export function Dashboard() {
         </button>
       </div>
 
+      {/* Overview stats */}
+      {overview && overview.export_count > 0 && (
+        <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          <div className="rounded-xl border border-border bg-card p-3.5 shadow-sm">
+            <div className="mb-1.5 flex items-center gap-1.5 text-muted-foreground">
+              <Database size={14} />
+              <span className="text-xs font-medium">Total Exports</span>
+            </div>
+            <span className="text-lg font-bold text-card-foreground">
+              {overview.export_count.toLocaleString()}
+            </span>
+          </div>
+          <div className="rounded-xl border border-border bg-card p-3.5 shadow-sm">
+            <div className="mb-1.5 flex items-center gap-1.5 text-muted-foreground">
+              <Files size={14} />
+              <span className="text-xs font-medium">Total Files</span>
+            </div>
+            <span className="text-lg font-bold text-card-foreground">
+              {overview.total_files.toLocaleString()}
+            </span>
+          </div>
+          <div className="rounded-xl border border-border bg-card p-3.5 shadow-sm">
+            <div className="mb-1.5 flex items-center gap-1.5 text-muted-foreground">
+              <FolderOpen size={14} />
+              <span className="text-xs font-medium">Total Directories</span>
+            </div>
+            <span className="text-lg font-bold text-card-foreground">
+              {overview.total_dirs.toLocaleString()}
+            </span>
+          </div>
+          <div className="rounded-xl border border-border bg-card p-3.5 shadow-sm">
+            <div className="mb-1.5 flex items-center gap-1.5 text-muted-foreground">
+              <HardDrive size={14} />
+              <span className="text-xs font-medium">Total Storage</span>
+            </div>
+            <span className="text-lg font-bold text-card-foreground">
+              {formatSize(overview.total_size)}
+            </span>
+          </div>
+          <div className="rounded-xl border border-border bg-card p-3.5 shadow-sm">
+            <div className="mb-1.5 flex items-center gap-1.5 text-muted-foreground">
+              <ShieldAlert size={14} />
+              <span className="text-xs font-medium">Avg PII Risk</span>
+            </div>
+            <div className="flex items-baseline gap-2">
+              <span className="text-lg font-bold text-card-foreground">
+                {overview.avg_pii_score}/100
+              </span>
+              <div className="flex gap-1">
+                {Object.entries(overview.pii_band_distribution).map(([band, count]) => (
+                  <span
+                    key={band}
+                    className={cn(
+                      "inline-flex rounded-full border px-1.5 py-0 text-[10px] font-semibold",
+                      bandColor(band)
+                    )}
+                  >
+                    {count} {band}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Search and sort bar */}
       <div className="mb-5 flex flex-col gap-3 sm:flex-row">
         <div className="relative flex-1">
@@ -91,12 +191,16 @@ export function Dashboard() {
             className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
           />
           <input
+            ref={searchRef}
             type="text"
             placeholder="Search exports by name, company, description..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="h-10 w-full rounded-lg border border-input bg-background pl-10 pr-4 text-sm text-foreground outline-none transition-colors focus:ring-2 focus:ring-ring"
+            className="h-10 w-full rounded-lg border border-input bg-background pl-10 pr-20 text-sm text-foreground outline-none transition-colors focus:ring-2 focus:ring-ring"
           />
+          <kbd className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 hidden items-center gap-0.5 rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground sm:inline-flex">
+            <Command size={10} />K
+          </kbd>
         </div>
         <div className="flex items-center gap-2">
           <ArrowUpDown size={14} className="text-muted-foreground" />
@@ -184,7 +288,7 @@ export function Dashboard() {
       <ImportDialog
         open={importOpen}
         onClose={() => setImportOpen(false)}
-        onImported={loadExports}
+        onImported={handleImported}
       />
     </div>
   );

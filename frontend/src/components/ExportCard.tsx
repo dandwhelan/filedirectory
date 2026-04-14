@@ -26,7 +26,10 @@ export function ExportCard({ data }: ExportCardProps) {
             <FileJson size={20} className="text-primary" />
           </div>
           <div>
-            <h3 className="font-semibold text-card-foreground group-hover:text-primary transition-colors line-clamp-1">
+            <h3
+              title={data.filename}
+              className="font-semibold text-card-foreground group-hover:text-primary transition-colors line-clamp-1"
+            >
               {data.filename}
             </h3>
             {data.company && (
@@ -46,7 +49,7 @@ export function ExportCard({ data }: ExportCardProps) {
       </div>
 
       {data.description && (
-        <p className="mb-3 text-sm text-muted-foreground line-clamp-2">
+        <p title={data.description} className="mb-3 text-sm text-muted-foreground line-clamp-2">
           {data.description}
         </p>
       )}

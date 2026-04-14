@@ -39,9 +39,10 @@ const tooltipStyle = {
 
 interface FileTypeChartProps {
   data: FileTypeCount[];
+  onSegmentClick?: (ext: string) => void;
 }
 
-export function FileTypeChart({ data }: FileTypeChartProps) {
+export function FileTypeChart({ data, onSegmentClick }: FileTypeChartProps) {
   if (!data || data.length === 0) {
     return (
       <p className="py-8 text-center text-sm text-muted-foreground">
@@ -51,33 +52,49 @@ export function FileTypeChart({ data }: FileTypeChartProps) {
   }
 
   return (
-    <ResponsiveContainer width="100%" height={250}>
-      <PieChart>
-        <Pie
-          data={data}
-          cx="50%"
-          cy="50%"
-          innerRadius={50}
-          outerRadius={90}
-          paddingAngle={2}
-          dataKey="value"
-          label={(props: PieLabelRenderProps) => {
-            const name = String(props.name ?? "");
-            const percent = Number(props.percent ?? 0);
-            return `${name} ${(percent * 100).toFixed(0)}%`;
-          }}
-          labelLine={false}
-        >
-          {data.map((_, i) => (
-            <Cell
-              key={i}
-              fill={CHART_COLORS[i % CHART_COLORS.length]}
-            />
-          ))}
-        </Pie>
-        <Tooltip contentStyle={tooltipStyle} />
-      </PieChart>
-    </ResponsiveContainer>
+    <div>
+      <ResponsiveContainer width="100%" height={250}>
+        <PieChart>
+          <Pie
+            data={data}
+            cx="50%"
+            cy="50%"
+            innerRadius={50}
+            outerRadius={90}
+            paddingAngle={2}
+            dataKey="value"
+            style={onSegmentClick ? { cursor: "pointer" } : undefined}
+            onClick={
+              onSegmentClick
+                ? (_, index) => {
+                    const ext = data[index]?.name;
+                    if (ext) onSegmentClick(ext);
+                  }
+                : undefined
+            }
+            label={(props: PieLabelRenderProps) => {
+              const name = String(props.name ?? "");
+              const percent = Number(props.percent ?? 0);
+              return `${name} ${(percent * 100).toFixed(0)}%`;
+            }}
+            labelLine={false}
+          >
+            {data.map((_, i) => (
+              <Cell
+                key={i}
+                fill={CHART_COLORS[i % CHART_COLORS.length]}
+              />
+            ))}
+          </Pie>
+          <Tooltip contentStyle={tooltipStyle} />
+        </PieChart>
+      </ResponsiveContainer>
+      {onSegmentClick && (
+        <p className="mt-1 text-center text-[11px] text-muted-foreground">
+          Click a segment to view files
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -155,9 +172,10 @@ export function PiiCategoryChart({ signals }: PiiCategoryChartProps) {
 
 interface FileSizeByTypeChartProps {
   data: FileTypeCount[];
+  onBarClick?: (ext: string) => void;
 }
 
-export function FileSizeByTypeChart({ data }: FileSizeByTypeChartProps) {
+export function FileSizeByTypeChart({ data, onBarClick }: FileSizeByTypeChartProps) {
   if (!data || data.length === 0) {
     return (
       <p className="py-8 text-center text-sm text-muted-foreground">
@@ -167,33 +185,52 @@ export function FileSizeByTypeChart({ data }: FileSizeByTypeChartProps) {
   }
 
   return (
-    <ResponsiveContainer width="100%" height={250}>
-      <BarChart data={data} layout="vertical" margin={{ left: 10 }}>
-        <XAxis
-          type="number"
-          tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
-          tickFormatter={(v: number) => formatSize(v)}
-        />
-        <YAxis
-          type="category"
-          dataKey="name"
-          width={60}
-          tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
-        />
-        <Tooltip
-          contentStyle={tooltipStyle}
-          formatter={(...args: unknown[]) => {
-            const value = args[0] as number;
-            return [formatSize(value), "Total Size"];
-          }}
-        />
-        <Bar dataKey="value" radius={[0, 4, 4, 0]}>
-          {data.map((_, i) => (
-            <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
-          ))}
-        </Bar>
-      </BarChart>
-    </ResponsiveContainer>
+    <div>
+      <ResponsiveContainer width="100%" height={250}>
+        <BarChart data={data} layout="vertical" margin={{ left: 10 }}>
+          <XAxis
+            type="number"
+            tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
+            tickFormatter={(v: number) => formatSize(v)}
+          />
+          <YAxis
+            type="category"
+            dataKey="name"
+            width={60}
+            tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
+          />
+          <Tooltip
+            contentStyle={tooltipStyle}
+            formatter={(...args: unknown[]) => {
+              const value = args[0] as number;
+              return [formatSize(value), "Total Size"];
+            }}
+          />
+          <Bar
+            dataKey="value"
+            radius={[0, 4, 4, 0]}
+            style={onBarClick ? { cursor: "pointer" } : undefined}
+            onClick={
+              onBarClick
+                ? (entry) => {
+                    const ext = (entry as { name?: string })?.name;
+                    if (ext) onBarClick(ext);
+                  }
+                : undefined
+            }
+          >
+            {data.map((_, i) => (
+              <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+      {onBarClick && (
+        <p className="mt-1 text-center text-[11px] text-muted-foreground">
+          Click a bar to view files
+        </p>
+      )}
+    </div>
   );
 }
 

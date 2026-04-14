@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
@@ -21,6 +21,7 @@ import {
 } from "@/components/Charts";
 import { PiiTable } from "@/components/PiiTable";
 import { LazyTreeView } from "@/components/TreeView";
+import { FileListPanel } from "@/components/FileListPanel";
 
 export function ExportDetail() {
   const { id } = useParams<{ id: string }>();
@@ -29,6 +30,7 @@ export function ExportDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [treeFilter, setTreeFilter] = useState("");
+  const [selectedExt, setSelectedExt] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -50,6 +52,12 @@ export function ExportDetail() {
       alert("Failed to delete export");
     }
   };
+
+  const handleExtClick = useCallback((ext: string) => {
+    // Strip the leading dot if present (e.g. ".pdf" -> "pdf")
+    const cleaned = ext.replace(/^\./, "");
+    setSelectedExt(cleaned);
+  }, []);
 
   if (loading) {
     return (
@@ -84,7 +92,7 @@ export function ExportDetail() {
           >
             <ArrowLeft size={14} /> Back to exports
           </Link>
-          <h1 className="text-2xl font-bold text-foreground">
+          <h1 className="text-2xl font-bold text-foreground" title={data.filename}>
             {data.filename}
           </h1>
 
@@ -137,15 +145,26 @@ export function ExportDetail() {
           <h3 className="mb-2 text-sm font-semibold text-card-foreground">
             File Type Distribution
           </h3>
-          <FileTypeChart data={data.file_type_counts} />
+          <FileTypeChart data={data.file_type_counts} onSegmentClick={handleExtClick} />
         </div>
         <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
           <h3 className="mb-2 text-sm font-semibold text-card-foreground">
             Storage by File Type
           </h3>
-          <FileSizeByTypeChart data={data.file_size_by_type} />
+          <FileSizeByTypeChart data={data.file_size_by_type} onBarClick={handleExtClick} />
         </div>
       </div>
+
+      {/* File list panel — shown when a chart segment/bar is clicked */}
+      {selectedExt && (
+        <div className="mb-4">
+          <FileListPanel
+            exportId={data.id}
+            extension={selectedExt}
+            onClose={() => setSelectedExt(null)}
+          />
+        </div>
+      )}
 
       {/* Charts — Row 2 */}
       <div className="mb-4 grid gap-4 lg:grid-cols-2">
