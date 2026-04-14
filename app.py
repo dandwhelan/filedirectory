@@ -363,23 +363,28 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
 
         if parsed.path == "/api/exports":
-            self._handle_exports_list()
+            self._handle_exports_list(params)
             return
         if parsed.path.startswith("/api/export/"):
             parts = parsed.path.split("/")
             if len(parts) >= 4:
                 try:
                     export_id = int(parts[3])
-                    self._handle_export_detail(export_id)
-                    return
                 except ValueError:
-                    pass
+                    self._error_response(HTTPStatus.BAD_REQUEST, "Invalid export ID")
+                    return
+                # /api/export/<id>/children — lazy tree loading
+                if len(parts) >= 5 and parts[4] == "children":
+                    self._handle_export_children(export_id, params)
+                    return
+                self._handle_export_detail(export_id)
+                return
             self._error_response(HTTPStatus.BAD_REQUEST, "Invalid export ID")
             return
         if parsed.path == "/api/export":
-            params = parse_qs(parsed.query)
             filename = params.get("file", [""])[0]
             self._handle_export_file(filename)
             return
@@ -419,32 +424,70 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
 
         self._error_response(HTTPStatus.NOT_FOUND, "Unknown endpoint")
 
-    # -- List all exports (from DB) --
+    # -- List exports (paginated, searchable, sortable) --
 
-    def _handle_exports_list(self):
+    def _handle_exports_list(self, params: dict):
+        page = max(1, int(params.get("page", ["1"])[0]))
+        per_page = min(100, max(1, int(params.get("per_page", ["20"])[0])))
+        search = params.get("search", [""])[0].strip()
+        sort = params.get("sort", ["updated_at"])[0]
+        order = params.get("order", ["desc"])[0].upper()
+
+        allowed_sort = {"updated_at", "filename", "pii_score", "total_size", "imported_at"}
+        if sort not in allowed_sort:
+            sort = "updated_at"
+        if order not in ("ASC", "DESC"):
+            order = "DESC"
+
         conn = get_db()
-        rows = conn.execute("""
+
+        where_clause = ""
+        where_params: list = []
+        if search:
+            where_clause = "WHERE filename LIKE ? OR company LIKE ? OR description LIKE ? OR folder LIKE ?"
+            like = f"%{search}%"
+            where_params = [like, like, like, like]
+
+        # Total count
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM exports {where_clause}", where_params
+        ).fetchone()[0]
+
+        # Paginated results
+        offset = (page - 1) * per_page
+        rows = conn.execute(f"""
             SELECT id, filename, company, folder, description, imported_at, updated_at,
                    file_count, dir_count, total_size, pii_score, pii_band
-            FROM exports ORDER BY updated_at DESC
-        """).fetchall()
+            FROM exports {where_clause}
+            ORDER BY {sort} {order}
+            LIMIT ? OFFSET ?
+        """, where_params + [per_page, offset]).fetchall()
         conn.close()
 
-        exports = [dict(row) for row in rows]
-        self._json_response({"exports": exports})
+        total_pages = max(1, (total + per_page - 1) // per_page)
+        self._json_response({
+            "exports": [dict(row) for row in rows],
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": total_pages,
+        })
 
-    # -- Get single export detail with full tree --
+    # -- Get single export detail (without full tree) --
 
     def _handle_export_detail(self, export_id: int):
         conn = get_db()
-        row = conn.execute("SELECT * FROM exports WHERE id = ?", (export_id,)).fetchone()
+        row = conn.execute("""
+            SELECT id, filename, company, folder, description, imported_at, updated_at,
+                   file_count, dir_count, total_size, pii_score, pii_band
+            FROM exports WHERE id = ?
+        """, (export_id,)).fetchone()
         if not row:
             conn.close()
             self._error_response(HTTPStatus.NOT_FOUND, "Export not found")
             return
 
         export_data = dict(row)
-        export_data["tree"] = json.loads(export_data.pop("raw_json"))
 
         # PII signals
         pii_rows = conn.execute("""
@@ -453,8 +496,75 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
         """, (export_id,)).fetchall()
         export_data["pii_signals"] = [dict(r) for r in pii_rows]
 
+        # File type distribution (computed from nodes table)
+        file_rows = conn.execute(
+            "SELECT name FROM nodes WHERE export_id = ? AND is_dir = 0",
+            (export_id,)
+        ).fetchall()
+        ext_counts: dict[str, int] = {}
+        for r in file_rows:
+            name = r["name"]
+            idx = name.rfind(".")
+            ext = name[idx + 1:].lower() if idx > 0 else "other"
+            ext_counts[ext] = ext_counts.get(ext, 0) + 1
+        top_exts = sorted(ext_counts.items(), key=lambda x: x[1], reverse=True)[:8]
+        export_data["file_type_counts"] = [
+            {"name": f".{ext}", "value": cnt} for ext, cnt in top_exts
+        ]
+
         conn.close()
         self._json_response(export_data)
+
+    # -- Lazy tree: get children of a node --
+
+    def _handle_export_children(self, export_id: int, params: dict):
+        parent_id_str = params.get("parent_id", [""])[0]
+
+        conn = get_db()
+
+        # Verify export exists
+        if not conn.execute("SELECT 1 FROM exports WHERE id = ?", (export_id,)).fetchone():
+            conn.close()
+            self._error_response(HTTPStatus.NOT_FOUND, "Export not found")
+            return
+
+        if parent_id_str:
+            try:
+                parent_id = int(parent_id_str)
+            except ValueError:
+                conn.close()
+                self._error_response(HTTPStatus.BAD_REQUEST, "Invalid parent_id")
+                return
+            rows = conn.execute("""
+                SELECT n.id, n.name, n.path, n.is_dir, n.size,
+                       EXISTS(SELECT 1 FROM nodes c WHERE c.parent_id = n.id) AS has_children
+                FROM nodes n
+                WHERE n.export_id = ? AND n.parent_id = ?
+                ORDER BY n.is_dir DESC, n.name ASC
+            """, (export_id, parent_id)).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT n.id, n.name, n.path, n.is_dir, n.size,
+                       EXISTS(SELECT 1 FROM nodes c WHERE c.parent_id = n.id) AS has_children
+                FROM nodes n
+                WHERE n.export_id = ? AND n.parent_id IS NULL
+                ORDER BY n.is_dir DESC, n.name ASC
+            """, (export_id,)).fetchall()
+
+        conn.close()
+
+        children = [
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "path": r["path"],
+                "is_dir": bool(r["is_dir"]),
+                "size": r["size"],
+                "has_children": bool(r["has_children"]),
+            }
+            for r in rows
+        ]
+        self._json_response({"children": children})
 
     # -- Legacy: load by filename --
 
