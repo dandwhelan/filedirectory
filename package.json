@@ -2,9 +2,9 @@
   "name": "json-export-browser",
   "private": true,
   "scripts": {
-    "dev": "concurrently --names backend,frontend --prefix-colors blue,green \"python3 app.py\" \"npm run dev --prefix frontend\"",
+    "dev": "concurrently --names backend,frontend --prefix-colors blue,green \"python app.py\" \"npm run dev --prefix frontend\"",
     "build": "npm run build --prefix frontend",
-    "start": "python3 app.py",
+    "start": "python app.py",
     "lint": "npm run lint --prefix frontend",
     "install:frontend": "npm install --prefix frontend"
   },
