@@ -439,6 +439,10 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
                 if len(parts) >= 5 and parts[4] == "files-by-type":
                     self._handle_files_by_type(export_id, params)
                     return
+                # /api/export/<id>/search?q=keyword
+                if len(parts) >= 5 and parts[4] == "search":
+                    self._handle_search(export_id, params)
+                    return
                 self._handle_export_detail(export_id)
                 return
             self._error_response(HTTPStatus.BAD_REQUEST, "Invalid export ID")
@@ -735,6 +739,44 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
         self._json_response({
             "extension": ext,
             "files": [{"name": r["name"], "path": r["path"], "size": r["size"]} for r in rows],
+            "count": len(rows),
+        })
+
+    # -- Search files within an export --
+
+    def _handle_search(self, export_id: int, params: dict):
+        query = params.get("q", [""])[0].strip()
+        if not query or len(query) < 2:
+            self._json_response({"results": [], "count": 0, "query": query})
+            return
+
+        conn = get_db()
+        if not conn.execute("SELECT 1 FROM exports WHERE id = ?", (export_id,)).fetchone():
+            conn.close()
+            self._error_response(HTTPStatus.NOT_FOUND, "Export not found")
+            return
+
+        like = f"%{query}%"
+        rows = conn.execute("""
+            SELECT name, path, is_dir, size
+            FROM nodes
+            WHERE export_id = ? AND (LOWER(name) LIKE LOWER(?) OR LOWER(path) LIKE LOWER(?))
+            ORDER BY is_dir DESC, name ASC
+            LIMIT 200
+        """, (export_id, like, like)).fetchall()
+        conn.close()
+
+        self._json_response({
+            "query": query,
+            "results": [
+                {
+                    "name": r["name"],
+                    "path": r["path"],
+                    "is_dir": bool(r["is_dir"]),
+                    "size": r["size"],
+                }
+                for r in rows
+            ],
             "count": len(rows),
         })
 
