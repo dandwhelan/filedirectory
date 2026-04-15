@@ -16,7 +16,14 @@ import {
   Printer,
   GitCompare,
 } from "lucide-react";
-import { fetchExports, fetchOverview, type ExportSummary, type OverviewStats } from "@/lib/api";
+import {
+  fetchExports,
+  fetchOverview,
+  searchGlobal,
+  type ExportSummary,
+  type GlobalSearchResult,
+  type OverviewStats,
+} from "@/lib/api";
 import { formatSize, bandColor, cn } from "@/lib/utils";
 import { ExportCard } from "@/components/ExportCard";
 import { ImportDialog } from "@/components/ImportDialog";
@@ -34,6 +41,9 @@ export function Dashboard() {
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
   const [overview, setOverview] = useState<OverviewStats | null>(null);
+  const [globalResults, setGlobalResults] = useState<GlobalSearchResult[]>([]);
+  const [globalCount, setGlobalCount] = useState(0);
+  const [globalLoading, setGlobalLoading] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
   // Debounce search so we don't fire on every keystroke
@@ -89,6 +99,28 @@ export function Dashboard() {
   useEffect(() => {
     fetchOverview().then(setOverview).catch(console.error);
   }, []);
+
+  // Cross-import global file search (runs in parallel with cards list)
+  useEffect(() => {
+    if (debouncedSearch.trim().length < 2) {
+      setGlobalResults([]);
+      setGlobalCount(0);
+      setGlobalLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setGlobalLoading(true);
+    searchGlobal(debouncedSearch.trim(), 100, controller.signal)
+      .then((res) => {
+        setGlobalResults(res.results);
+        setGlobalCount(res.count);
+      })
+      .catch((err) => {
+        if (err?.name !== "AbortError") console.error(err);
+      })
+      .finally(() => setGlobalLoading(false));
+    return () => controller.abort();
+  }, [debouncedSearch]);
 
   // Refresh overview after imports
   const handleImported = useCallback(() => {
@@ -212,7 +244,7 @@ export function Dashboard() {
           <input
             ref={searchRef}
             type="text"
-            placeholder="Search exports by name, company, description..."
+            placeholder="Search imports and files inside them..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="h-10 w-full rounded-lg border border-input bg-background pl-10 pr-20 text-sm text-foreground outline-none transition-colors focus:ring-2 focus:ring-ring"
@@ -304,6 +336,68 @@ export function Dashboard() {
             </div>
           )}
         </>
+      )}
+
+      {/* Cross-import file/folder search results */}
+      {debouncedSearch.trim().length >= 2 && (
+        <section className="mt-8 print:hidden">
+          <div className="mb-3 flex items-baseline justify-between gap-3">
+            <h2 className="text-lg font-semibold text-foreground">
+              Files and folders across imports
+              {!globalLoading && (
+                <span className="ml-2 text-sm font-normal text-muted-foreground">
+                  {globalCount} match{globalCount === 1 ? "" : "es"}
+                  {globalCount >= 100 ? " (showing first 100)" : ""}
+                </span>
+              )}
+            </h2>
+          </div>
+
+          {globalLoading ? (
+            <div className="flex items-center justify-center py-10">
+              <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+            </div>
+          ) : globalResults.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-border py-8 text-center text-sm text-muted-foreground">
+              No files or folders match "{debouncedSearch}" in any import.
+            </div>
+          ) : (
+            <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
+              {globalResults.map((r, idx) => (
+                <li key={`${r.export_id}-${r.path}-${idx}`}>
+                  <Link
+                    to={`/export/${r.export_id}`}
+                    className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-accent/60"
+                    title={r.path}
+                  >
+                    {r.is_dir ? (
+                      <FolderOpen size={16} className="shrink-0 text-muted-foreground" />
+                    ) : (
+                      <FileJson size={16} className="shrink-0 text-muted-foreground" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium text-card-foreground">
+                        {r.name}
+                      </div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        {r.path}
+                      </div>
+                    </div>
+                    <span className="hidden shrink-0 items-center gap-1 rounded-full border border-border bg-muted/50 px-2 py-0.5 text-[11px] text-muted-foreground sm:inline-flex">
+                      <Database size={11} />
+                      <span className="max-w-[14rem] truncate">{r.export_filename}</span>
+                    </span>
+                    {!r.is_dir && (
+                      <span className="hidden shrink-0 text-xs tabular-nums text-muted-foreground md:inline">
+                        {formatSize(r.size)}
+                      </span>
+                    )}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       )}
 
       <ImportDialog

@@ -1,0 +1,124 @@
+{
+  "company": "Initech",
+  "folder": "finance",
+  "description": "Accounting team file share. Invoices, bank statements, vendor contracts. Expected to score HIGH on PII (financial + legal + tax).",
+  "children": [
+    {
+      "name": "2025",
+      "path": "2025",
+      "is_dir": true,
+      "size": 0,
+      "children": [
+        {
+          "name": "invoices",
+          "path": "2025/invoices",
+          "is_dir": true,
+          "size": 0,
+          "children": [
+            {
+              "name": "INV-001-acme.pdf",
+              "path": "2025/invoices/INV-001-acme.pdf",
+              "is_dir": false,
+              "size": 22100,
+              "children": []
+            },
+            {
+              "name": "INV-002-globex.pdf",
+              "path": "2025/invoices/INV-002-globex.pdf",
+              "is_dir": false,
+              "size": 19830,
+              "children": []
+            },
+            {
+              "name": "INV-003-umbrella.pdf",
+              "path": "2025/invoices/INV-003-umbrella.pdf",
+              "is_dir": false,
+              "size": 21475,
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "bank-statements",
+          "path": "2025/bank-statements",
+          "is_dir": true,
+          "size": 0,
+          "children": [
+            {
+              "name": "chase-jan-2025.pdf",
+              "path": "2025/bank-statements/chase-jan-2025.pdf",
+              "is_dir": false,
+              "size": 185400,
+              "children": []
+            },
+            {
+              "name": "chase-feb-2025.pdf",
+              "path": "2025/bank-statements/chase-feb-2025.pdf",
+              "is_dir": false,
+              "size": 192030,
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "tax",
+          "path": "2025/tax",
+          "is_dir": true,
+          "size": 0,
+          "children": [
+            {
+              "name": "form-1120-draft.pdf",
+              "path": "2025/tax/form-1120-draft.pdf",
+              "is_dir": false,
+              "size": 312045,
+              "children": []
+            },
+            {
+              "name": "ein-verification-letter.pdf",
+              "path": "2025/tax/ein-verification-letter.pdf",
+              "is_dir": false,
+              "size": 68200,
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "contracts",
+      "path": "contracts",
+      "is_dir": true,
+      "size": 0,
+      "children": [
+        {
+          "name": "vendor-nda-umbrella.pdf",
+          "path": "contracts/vendor-nda-umbrella.pdf",
+          "is_dir": false,
+          "size": 154200,
+          "children": []
+        },
+        {
+          "name": "msa-acme.pdf",
+          "path": "contracts/msa-acme.pdf",
+          "is_dir": false,
+          "size": 278900,
+          "children": []
+        },
+        {
+          "name": "terms-of-service-2025.pdf",
+          "path": "contracts/terms-of-service-2025.pdf",
+          "is_dir": false,
+          "size": 92050,
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "credit-card-reconciliation.xlsx",
+      "path": "credit-card-reconciliation.xlsx",
+      "is_dir": false,
+      "size": 41200,
+      "children": []
+    }
+  ]
+}

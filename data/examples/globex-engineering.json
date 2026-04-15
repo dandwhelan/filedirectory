@@ -1,0 +1,117 @@
+{
+  "company": "Globex Industries",
+  "folder": "engineering",
+  "description": "Mirror of the engineering share. Mostly source and docs. Expected to score LOW on PII (credentials folder pushes it up a bit).",
+  "children": [
+    {
+      "name": "src",
+      "path": "src",
+      "is_dir": true,
+      "size": 0,
+      "children": [
+        {
+          "name": "server.py",
+          "path": "src/server.py",
+          "is_dir": false,
+          "size": 12450,
+          "children": []
+        },
+        {
+          "name": "db.py",
+          "path": "src/db.py",
+          "is_dir": false,
+          "size": 8320,
+          "children": []
+        },
+        {
+          "name": "handlers",
+          "path": "src/handlers",
+          "is_dir": true,
+          "size": 0,
+          "children": [
+            {
+              "name": "auth.py",
+              "path": "src/handlers/auth.py",
+              "is_dir": false,
+              "size": 6200,
+              "children": []
+            },
+            {
+              "name": "users.py",
+              "path": "src/handlers/users.py",
+              "is_dir": false,
+              "size": 5890,
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "docs",
+      "path": "docs",
+      "is_dir": true,
+      "size": 0,
+      "children": [
+        {
+          "name": "architecture.md",
+          "path": "docs/architecture.md",
+          "is_dir": false,
+          "size": 24800,
+          "children": []
+        },
+        {
+          "name": "deployment.md",
+          "path": "docs/deployment.md",
+          "is_dir": false,
+          "size": 19650,
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "ops",
+      "path": "ops",
+      "is_dir": true,
+      "size": 0,
+      "children": [
+        {
+          "name": "credentials",
+          "path": "ops/credentials",
+          "is_dir": true,
+          "size": 0,
+          "children": [
+            {
+              "name": "api-keys-rotation.md",
+              "path": "ops/credentials/api-keys-rotation.md",
+              "is_dir": false,
+              "size": 3400,
+              "children": []
+            },
+            {
+              "name": "vault-access.md",
+              "path": "ops/credentials/vault-access.md",
+              "is_dir": false,
+              "size": 2100,
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "audit-log-2025-Q1.csv",
+          "path": "ops/audit-log-2025-Q1.csv",
+          "is_dir": false,
+          "size": 1284000,
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "README.md",
+      "path": "README.md",
+      "is_dir": false,
+      "size": 4120,
+      "children": []
+    }
+  ]
+}

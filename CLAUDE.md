@@ -85,6 +85,7 @@ Frontend (`frontend/src/`):
 | `GET`  | `/api/export/<id>` | Detail (metadata + PII + charts data) |
 | `GET`  | `/api/export/<id>/children` | Lazy tree (paginated) |
 | `GET`  | `/api/export/<id>/search?q=` | In-export name/path search |
+| `GET`  | `/api/search?q=` | Global search across all imports (names + paths) |
 | `GET`  | `/api/export/<id>/files-by-type?ext=` | Files of one extension |
 | `POST` | `/api/import` | Import JSON (`filename`, `content`, `overwrite`) |
 | `DELETE`| `/api/export/<id>` | Delete import (DB + data/ file) |

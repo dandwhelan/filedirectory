@@ -103,6 +103,64 @@ Imported files must match this structure:
 }
 ```
 
+### Concrete example
+
+```json
+{
+  "company": "Acme Corp",
+  "folder": "hr-share",
+  "description": "Snapshot of the HR team share at 2026-04-01.",
+  "children": [
+    {
+      "name": "employees",
+      "path": "employees",
+      "is_dir": true,
+      "size": 0,
+      "children": [
+        {
+          "name": "offer-letter-jane-doe.pdf",
+          "path": "employees/offer-letter-jane-doe.pdf",
+          "is_dir": false,
+          "size": 184320,
+          "children": []
+        },
+        {
+          "name": "w2-2025-jane-doe.pdf",
+          "path": "employees/w2-2025-jane-doe.pdf",
+          "is_dir": false,
+          "size": 98234,
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "policies",
+      "path": "policies",
+      "is_dir": true,
+      "size": 0,
+      "children": [
+        {
+          "name": "handbook.md",
+          "path": "policies/handbook.md",
+          "is_dir": false,
+          "size": 42100,
+          "children": []
+        }
+      ]
+    }
+  ]
+}
+```
+
+Every node — file or directory — must include `name`, `path`, `is_dir`,
+`size`, and `children` (use `[]` for files). `path` should be the full path
+relative to the export root, with forward slashes. `size` is bytes (`0` is
+fine for directories).
+
+Ready-to-import examples live in [`data/examples/`](./data/examples). Copy
+any of them into `data/` (or drop them on the dashboard) to see the UI
+populated with realistic fixtures.
+
 Files that do not match this schema are rejected with a descriptive error message.
 
 ## API endpoints
@@ -113,6 +171,7 @@ Files that do not match this schema are rejected with a descriptive error messag
 | `GET`    | `/api/export/<id>`    | Full detail: tree, PII signals, stats        |
 | `GET`    | `/api/export/<id>/children` | Lazy tree children (paginated)        |
 | `GET`    | `/api/export/<id>/search?q=` | Search names and paths inside an export |
+| `GET`    | `/api/search?q=`      | Global search across all imports (names + paths)   |
 | `GET`    | `/api/export/<id>/files-by-type?ext=` | All files of an extension    |
 | `POST`   | `/api/import`         | Import a JSON file (`filename`, `content`, optional `overwrite`) |
 | `DELETE` | `/api/export/<id>`    | Delete an import from DB and `data/`         |

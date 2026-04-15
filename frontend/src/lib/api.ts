@@ -102,6 +102,17 @@ export interface SearchResponse {
   count: number;
 }
 
+export interface GlobalSearchResult extends SearchResult {
+  export_id: number;
+  export_filename: string;
+}
+
+export interface GlobalSearchResponse {
+  query: string;
+  results: GlobalSearchResult[];
+  count: number;
+}
+
 export interface FilesByTypeResult {
   extension: string;
   files: FileByType[];
@@ -188,6 +199,17 @@ export async function searchExport(
     `${API_BASE}/export/${exportId}/search?q=${encodeURIComponent(query)}`
   );
   if (!res.ok) throw new Error("Failed to search");
+  return res.json();
+}
+
+export async function searchGlobal(
+  query: string,
+  limit: number = 100,
+  signal?: AbortSignal
+): Promise<GlobalSearchResponse> {
+  const qs = new URLSearchParams({ q: query, limit: String(limit) });
+  const res = await fetch(`${API_BASE}/search?${qs}`, { signal });
+  if (!res.ok) throw new Error("Failed to search across imports");
   return res.json();
 }
 

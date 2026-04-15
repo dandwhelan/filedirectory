@@ -1,0 +1,123 @@
+{
+  "company": "Acme Corp",
+  "folder": "hr-share",
+  "description": "Snapshot of the HR team share. Contains offer letters, W-2s, and handbook docs. Expected to score HIGH on PII (tax, employment).",
+  "children": [
+    {
+      "name": "employees",
+      "path": "employees",
+      "is_dir": true,
+      "size": 0,
+      "children": [
+        {
+          "name": "jane-doe",
+          "path": "employees/jane-doe",
+          "is_dir": true,
+          "size": 0,
+          "children": [
+            {
+              "name": "offer-letter-2023.pdf",
+              "path": "employees/jane-doe/offer-letter-2023.pdf",
+              "is_dir": false,
+              "size": 184320,
+              "children": []
+            },
+            {
+              "name": "w2-2024.pdf",
+              "path": "employees/jane-doe/w2-2024.pdf",
+              "is_dir": false,
+              "size": 98234,
+              "children": []
+            },
+            {
+              "name": "w2-2025.pdf",
+              "path": "employees/jane-doe/w2-2025.pdf",
+              "is_dir": false,
+              "size": 99412,
+              "children": []
+            },
+            {
+              "name": "performance-review-2024.docx",
+              "path": "employees/jane-doe/performance-review-2024.docx",
+              "is_dir": false,
+              "size": 21876,
+              "children": []
+            },
+            {
+              "name": "background-check-report.pdf",
+              "path": "employees/jane-doe/background-check-report.pdf",
+              "is_dir": false,
+              "size": 412099,
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "john-smith",
+          "path": "employees/john-smith",
+          "is_dir": true,
+          "size": 0,
+          "children": [
+            {
+              "name": "offer-letter-2022.pdf",
+              "path": "employees/john-smith/offer-letter-2022.pdf",
+              "is_dir": false,
+              "size": 181005,
+              "children": []
+            },
+            {
+              "name": "1099-2024.pdf",
+              "path": "employees/john-smith/1099-2024.pdf",
+              "is_dir": false,
+              "size": 68123,
+              "children": []
+            },
+            {
+              "name": "termination-letter.pdf",
+              "path": "employees/john-smith/termination-letter.pdf",
+              "is_dir": false,
+              "size": 54210,
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "policies",
+      "path": "policies",
+      "is_dir": true,
+      "size": 0,
+      "children": [
+        {
+          "name": "handbook.md",
+          "path": "policies/handbook.md",
+          "is_dir": false,
+          "size": 42100,
+          "children": []
+        },
+        {
+          "name": "code-of-conduct.md",
+          "path": "policies/code-of-conduct.md",
+          "is_dir": false,
+          "size": 18500,
+          "children": []
+        },
+        {
+          "name": "pto-policy.pdf",
+          "path": "policies/pto-policy.pdf",
+          "is_dir": false,
+          "size": 31220,
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "salary-bands-2025.xlsx",
+      "path": "salary-bands-2025.xlsx",
+      "is_dir": false,
+      "size": 88012,
+      "children": []
+    }
+  ]
+}

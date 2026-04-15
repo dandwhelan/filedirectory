@@ -38,6 +38,8 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
             return self._handle_overview()
         if parsed.path == "/api/exports":
             return self._handle_exports_list(params)
+        if parsed.path == "/api/search":
+            return self._handle_global_search(params)
         if parsed.path == "/api/diff":
             return self._handle_diff(params)
         if parsed.path == "/api/pii-patterns":
@@ -406,6 +408,46 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
                 for r in rows
             ],
             "count": len(rows),
+        })
+
+    def _handle_global_search(self, params: dict):
+        query = params.get("q", [""])[0].strip()
+        if len(query) < 2:
+            return self._json_response({"query": query, "results": [], "count": 0})
+        try:
+            limit = min(200, max(1, int(params.get("limit", ["100"])[0])))
+        except ValueError:
+            limit = 100
+
+        like = f"%{query}%"
+        conn = get_db()
+        try:
+            rows = conn.execute("""
+                SELECT n.name, n.path, n.is_dir, n.size,
+                       n.export_id, e.filename AS export_filename
+                FROM nodes n
+                JOIN exports e ON e.id = n.export_id
+                WHERE LOWER(n.name) LIKE LOWER(?) OR LOWER(n.path) LIKE LOWER(?)
+                ORDER BY n.is_dir DESC, n.name ASC
+                LIMIT ?
+            """, (like, like, limit)).fetchall()
+        finally:
+            conn.close()
+
+        self._json_response({
+            "query": query,
+            "count": len(rows),
+            "results": [
+                {
+                    "name": r["name"],
+                    "path": r["path"],
+                    "is_dir": bool(r["is_dir"]),
+                    "size": r["size"],
+                    "export_id": r["export_id"],
+                    "export_filename": r["export_filename"],
+                }
+                for r in rows
+            ],
         })
 
     def _handle_export_file(self, filename: str):
