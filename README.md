@@ -39,6 +39,25 @@ Open: <http://127.0.0.1:8000>
 
 Any `.json` files already in `data/` are automatically imported into the database on startup.
 
+### Network binding
+
+By default the server binds to `127.0.0.1:8000` (loopback only). To listen on
+another interface — e.g. to expose it via an Azure NSG allowlist or behind a
+reverse proxy — set `JEB_HOST` / `JEB_PORT`:
+
+```bash
+# Listen on all interfaces (NSG / firewall does the IP filtering)
+JEB_HOST=0.0.0.0 JEB_PORT=8000 python3 app.py
+
+# Or bind to a specific NIC
+JEB_HOST=10.0.1.42 python3 app.py
+```
+
+There is no built-in auth or TLS. For anything beyond localhost put it behind
+an IP allowlist and a TLS-terminating proxy (Azure App Gateway, Front Door,
+nginx, Caddy, …) and keep `JEB_HOST=127.0.0.1` so the proxy is the only path
+in.
+
 ## Development setup
 
 ### Single command (recommended)

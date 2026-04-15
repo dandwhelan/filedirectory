@@ -24,7 +24,10 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=str(WEB_DIR), **kwargs)
 
     def log_message(self, format, *args):
-        pass  # suppress request logging noise
+        # Default http.server logging writes each request to stderr. Kept on
+        # so deployments behind a reverse proxy / systemd can capture access
+        # logs via journalctl or stdout redirection.
+        super().log_message(format, *args)
 
     # ------------------------------------------------------------------
     # Routing
