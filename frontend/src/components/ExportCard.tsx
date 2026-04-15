@@ -20,26 +20,26 @@ export function ExportCard({ data }: ExportCardProps) {
       to={`/export/${data.id}`}
       className="group block rounded-xl border border-border bg-card p-5 shadow-sm transition-all hover:shadow-md hover:border-primary/30"
     >
-      <div className="mb-3 flex items-start justify-between">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
             <FileJson size={20} className="text-primary" />
           </div>
-          <div>
+          <div className="min-w-0 flex-1">
             <h3
               title={data.filename}
-              className="font-semibold text-card-foreground group-hover:text-primary transition-colors line-clamp-1"
+              className="font-semibold text-card-foreground group-hover:text-primary transition-colors line-clamp-1 break-all"
             >
               {data.filename}
             </h3>
             {data.company && (
-              <p className="text-xs text-muted-foreground">{data.company}</p>
+              <p className="truncate text-xs text-muted-foreground">{data.company}</p>
             )}
           </div>
         </div>
         <span
           className={cn(
-            "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold",
+            "inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold",
             bandColor(data.pii_band)
           )}
         >

@@ -102,6 +102,17 @@ export interface SearchResponse {
   count: number;
 }
 
+export interface GlobalSearchResult extends SearchResult {
+  export_id: number;
+  export_filename: string;
+}
+
+export interface GlobalSearchResponse {
+  query: string;
+  results: GlobalSearchResult[];
+  count: number;
+}
+
 export interface FilesByTypeResult {
   extension: string;
   files: FileByType[];
@@ -191,6 +202,17 @@ export async function searchExport(
   return res.json();
 }
 
+export async function searchGlobal(
+  query: string,
+  limit: number = 100,
+  signal?: AbortSignal
+): Promise<GlobalSearchResponse> {
+  const qs = new URLSearchParams({ q: query, limit: String(limit) });
+  const res = await fetch(`${API_BASE}/search?${qs}`, { signal });
+  if (!res.ok) throw new Error("Failed to search across imports");
+  return res.json();
+}
+
 export async function fetchFilesByType(
   exportId: number,
   ext: string
@@ -199,5 +221,122 @@ export async function fetchFilesByType(
     `${API_BASE}/export/${exportId}/files-by-type?ext=${encodeURIComponent(ext)}`
   );
   if (!res.ok) throw new Error("Failed to load files");
+  return res.json();
+}
+
+// --- PII patterns ---
+
+export interface PiiPattern {
+  id: number;
+  label: string;
+  category: string;
+  severity: "high" | "medium" | "low";
+  score: number;
+  keywords: string[];
+  enabled: boolean;
+  is_builtin: boolean;
+  updated_at?: string;
+}
+
+export interface PiiPatternInput {
+  label: string;
+  category: string;
+  severity: "high" | "medium" | "low";
+  score: number;
+  keywords: string[];
+  enabled?: boolean;
+}
+
+export async function fetchPiiPatterns(): Promise<PiiPattern[]> {
+  const res = await fetch(`${API_BASE}/pii-patterns`);
+  if (!res.ok) throw new Error("Failed to load PII patterns");
+  const data = await res.json();
+  return data.patterns;
+}
+
+export async function createPiiPattern(input: PiiPatternInput): Promise<{ id: number }> {
+  const res = await fetch(`${API_BASE}/pii-patterns`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error((await res.json()).error || "Failed to create pattern");
+  return res.json();
+}
+
+export async function updatePiiPattern(id: number, input: PiiPatternInput): Promise<void> {
+  const res = await fetch(`${API_BASE}/pii-patterns/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error((await res.json()).error || "Failed to update pattern");
+}
+
+export async function togglePiiPattern(id: number, enabled: boolean): Promise<void> {
+  const res = await fetch(`${API_BASE}/pii-patterns/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) throw new Error((await res.json()).error || "Failed to toggle pattern");
+}
+
+export async function deletePiiPattern(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/pii-patterns/${id}`, { method: "DELETE" });
+  if (!res.ok) throw new Error((await res.json()).error || "Failed to delete pattern");
+}
+
+export async function resetPiiPatterns(): Promise<void> {
+  const res = await fetch(`${API_BASE}/pii-patterns/reset`, { method: "POST" });
+  if (!res.ok) throw new Error("Failed to reset patterns");
+}
+
+export async function rescanAll(): Promise<{ rescanned: number; total: number }> {
+  const res = await fetch(`${API_BASE}/pii-rescan`, { method: "POST" });
+  if (!res.ok) throw new Error("Failed to rescan");
+  return res.json();
+}
+
+export async function rescanOne(
+  exportId: number
+): Promise<{ id: number; pii_score: number; pii_band: string; signal_count: number }> {
+  const res = await fetch(`${API_BASE}/pii-rescan/${exportId}`, { method: "POST" });
+  if (!res.ok) throw new Error("Failed to rescan export");
+  return res.json();
+}
+
+// --- Diff ---
+
+export interface DiffItem {
+  path: string;
+  size: number;
+  is_dir: boolean;
+}
+
+export interface DiffSizeChange {
+  path: string;
+  size_a: number;
+  size_b: number;
+  delta: number;
+}
+
+export interface DiffResult {
+  a: { id: number; filename: string; total_size: number; file_count: number; dir_count: number; pii_score: number };
+  b: { id: number; filename: string; total_size: number; file_count: number; dir_count: number; pii_score: number };
+  added: DiffItem[];
+  removed: DiffItem[];
+  size_changed: DiffSizeChange[];
+  summary: {
+    added: number;
+    removed: number;
+    size_changed: number;
+    net_size_delta: number;
+  };
+}
+
+export async function fetchDiff(a: number, b: number): Promise<DiffResult> {
+  const res = await fetch(`${API_BASE}/diff?a=${a}&b=${b}`);
+  if (!res.ok) throw new Error((await res.json()).error || "Failed to compute diff");
   return res.json();
 }
