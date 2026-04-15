@@ -125,6 +125,10 @@ Frontend (`frontend/src/`):
   changes still require wiping `db/exports.db`.
 - **`app.py` is kept** as a tiny shim so existing docs and `dev.py` keep
   working. New code should import from `backend.*`.
+- **Host/port are env-driven.** `backend/config.py` reads `JEB_HOST` /
+  `JEB_PORT` with loopback defaults. Don't hardcode bindings — set the env
+  vars in the deploy unit instead. There is no auth or TLS; exposing
+  beyond `127.0.0.1` assumes a reverse proxy + IP allowlist in front.
 
 ## SQLite scaling
 
