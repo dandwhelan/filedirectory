@@ -9,7 +9,7 @@ from http.server import SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from .config import DATA_DIR, MAX_IMPORT_BYTES, WEB_DIR
+from .config import BASE_DIR, DATA_DIR, MAX_IMPORT_BYTES, WEB_DIR
 from .db import get_db
 from .importer import (
     hash_file_path,
@@ -74,6 +74,8 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
             return self._handle_diff(params)
         if parsed.path == "/api/pii-patterns":
             return self._handle_list_patterns()
+        if parsed.path == "/api/updates/check":
+            return self._handle_updates_check()
 
         if parsed.path.startswith("/api/export/"):
             parts = parsed.path.split("/")
@@ -114,6 +116,8 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
             return self._handle_create_pattern()
         if parsed.path == "/api/pii-patterns/reset":
             return self._handle_reset_patterns()
+        if parsed.path == "/api/updates/apply":
+            return self._handle_updates_apply()
         if parsed.path == "/api/pii-rescan":
             return self._handle_rescan_all()
         if parsed.path.startswith("/api/pii-rescan/"):
@@ -278,7 +282,7 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
         conn = get_db()
         row = conn.execute("""
             SELECT id, filename, company, folder, description, imported_at, updated_at,
-                   file_count, dir_count, total_size, pii_score, pii_band
+                   file_count, dir_count, total_size, pii_score, pii_band, raw_json
             FROM exports WHERE id = ? AND deleted_at = ''
         """, (export_id,)).fetchone()
         if not row:
@@ -286,6 +290,15 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
             return self._error_response(HTTPStatus.NOT_FOUND, "Export not found")
 
         export_data = dict(row)
+        try:
+            stored = json.loads(export_data.get("raw_json", "") or "{}")
+            meta = stored.get("_meta", {}) if isinstance(stored, dict) else {}
+            deep_debug = meta.get("deep_scan_debug")
+            if isinstance(deep_debug, dict):
+                export_data["deep_scan_debug"] = deep_debug
+        except (ValueError, TypeError):
+            pass
+        export_data.pop("raw_json", None)
 
         # Cap signals to avoid unbounded payloads on pathological exports.
         # Total count is exposed separately so the UI can warn the user.
@@ -993,6 +1006,120 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
         if summary is None:
             return self._error_response(HTTPStatus.NOT_FOUND, "Export not found")
         self._json_response(summary)
+
+    # ------------------------------------------------------------------
+    # Self-update (git pull)
+    # ------------------------------------------------------------------
+
+    def _git(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args],
+            cwd=str(BASE_DIR),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+
+    def _handle_updates_check(self):
+        if not (BASE_DIR / ".git").exists():
+            return self._error_response(
+                HTTPStatus.BAD_REQUEST,
+                "Updates require a git checkout (.git not found).",
+            )
+
+        branch_res = self._git("rev-parse", "--abbrev-ref", "HEAD")
+        if branch_res.returncode != 0:
+            return self._json_response(
+                {"error": "Unable to determine current branch.", "details": branch_res.stderr.strip()},
+                status=HTTPStatus.INTERNAL_SERVER_ERROR,
+            )
+        branch = branch_res.stdout.strip()
+
+        head_res = self._git("rev-parse", "HEAD")
+        if head_res.returncode != 0:
+            return self._json_response(
+                {"error": "Unable to determine current commit.", "details": head_res.stderr.strip()},
+                status=HTTPStatus.INTERNAL_SERVER_ERROR,
+            )
+
+        fetch_res = self._git("fetch", "--quiet", "origin", branch)
+        if fetch_res.returncode != 0:
+            return self._json_response(
+                {
+                    "branch": branch,
+                    "current_commit": head_res.stdout.strip(),
+                    "error": "Failed to fetch updates from origin.",
+                    "details": (fetch_res.stderr or fetch_res.stdout).strip(),
+                },
+                status=HTTPStatus.BAD_GATEWAY,
+            )
+
+        remote_res = self._git("rev-parse", f"origin/{branch}")
+        if remote_res.returncode != 0:
+            return self._json_response(
+                {
+                    "branch": branch,
+                    "current_commit": head_res.stdout.strip(),
+                    "error": f"Remote branch origin/{branch} not found.",
+                    "details": remote_res.stderr.strip(),
+                },
+                status=HTTPStatus.BAD_GATEWAY,
+            )
+
+        counts = self._git("rev-list", "--left-right", "--count", f"HEAD...origin/{branch}")
+        ahead, behind = 0, 0
+        if counts.returncode == 0:
+            parts = counts.stdout.strip().split()
+            if len(parts) == 2:
+                ahead = int(parts[0] or "0")
+                behind = int(parts[1] or "0")
+
+        self._json_response(
+            {
+                "branch": branch,
+                "current_commit": head_res.stdout.strip(),
+                "latest_commit": remote_res.stdout.strip(),
+                "ahead_by": ahead,
+                "behind_by": behind,
+                "can_update": behind > 0,
+            }
+        )
+
+    def _handle_updates_apply(self):
+        if not (BASE_DIR / ".git").exists():
+            return self._error_response(
+                HTTPStatus.BAD_REQUEST,
+                "Updates require a git checkout (.git not found).",
+            )
+
+        branch_res = self._git("rev-parse", "--abbrev-ref", "HEAD")
+        if branch_res.returncode != 0:
+            return self._json_response(
+                {"error": "Unable to determine current branch.", "details": branch_res.stderr.strip()},
+                status=HTTPStatus.INTERNAL_SERVER_ERROR,
+            )
+        branch = branch_res.stdout.strip()
+
+        pull_res = self._git("pull", "--ff-only", "origin", branch)
+        if pull_res.returncode != 0:
+            return self._json_response(
+                {
+                    "error": "Failed to apply update.",
+                    "details": (pull_res.stderr or pull_res.stdout).strip(),
+                },
+                status=HTTPStatus.BAD_GATEWAY,
+            )
+
+        head_res = self._git("rev-parse", "HEAD")
+        self._json_response(
+            {
+                "message": "Update applied. Restart the app to load new code.",
+                "branch": branch,
+                "current_commit": head_res.stdout.strip() if head_res.returncode == 0 else "",
+                "output": (pull_res.stdout or "").strip(),
+            }
+        )
 
     # ------------------------------------------------------------------
     # Diff two exports
