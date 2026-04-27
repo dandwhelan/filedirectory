@@ -56,6 +56,16 @@ export interface ExportDetail extends ExportSummary {
   file_size_by_type: FileTypeCount[];
   top_largest_files: LargestFile[];
   depth_distribution: DepthCount[];
+  deep_scan_debug?: {
+    enabled: boolean;
+    text_files_scanned: number;
+    text_files_skipped_size: number;
+    text_files_skipped_extension: number;
+    zip_files_scanned: number;
+    zip_files_skipped_size: number;
+    zip_entries_reviewed: number;
+    deep_signals: number;
+  };
 }
 
 export interface TrashEntry extends ExportSummary {
@@ -331,6 +341,39 @@ export async function rescanOne(
   const res = await fetch(`${API_BASE}/pii-rescan/${exportId}`, { method: "POST" });
   if (!res.ok) throw new Error("Failed to rescan export");
   return res.json();
+}
+
+// --- Self update ---
+export interface UpdateCheck {
+  branch: string;
+  current_commit: string;
+  latest_commit: string;
+  ahead_by: number;
+  behind_by: number;
+  can_update: boolean;
+  error?: string;
+  details?: string;
+}
+
+export async function checkForUpdates(): Promise<UpdateCheck> {
+  const res = await fetch(`${API_BASE}/updates/check`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || data.details || "Failed to check updates");
+  return data;
+}
+
+export interface ApplyUpdateResult {
+  message: string;
+  branch: string;
+  current_commit: string;
+  output?: string;
+}
+
+export async function applyUpdates(): Promise<ApplyUpdateResult> {
+  const res = await fetch(`${API_BASE}/updates/apply`, { method: "POST" });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || data.details || "Failed to apply update");
+  return data;
 }
 
 // --- Diff ---

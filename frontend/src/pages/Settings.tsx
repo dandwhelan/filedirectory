@@ -12,6 +12,8 @@ import {
 } from "lucide-react";
 import {
   createPiiPattern,
+  checkForUpdates,
+  applyUpdates,
   deletePiiPattern,
   fetchPiiPatterns,
   rescanAll,
@@ -20,6 +22,7 @@ import {
   updatePiiPattern,
   type PiiPattern,
   type PiiPatternInput,
+  type UpdateCheck,
 } from "@/lib/api";
 import { cn, severityBg } from "@/lib/utils";
 import { useToast } from "@/hooks/useToast";
@@ -43,6 +46,9 @@ export function Settings() {
   const [creating, setCreating] = useState(false);
   const [newDraft, setNewDraft] = useState<Draft>(EMPTY_DRAFT);
   const [rescanning, setRescanning] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheck | null>(null);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [applyingUpdate, setApplyingUpdate] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -170,6 +176,36 @@ export function Settings() {
     }
   };
 
+  const onCheckUpdates = async () => {
+    setCheckingUpdates(true);
+    try {
+      const data = await checkForUpdates();
+      setUpdateInfo(data);
+      if (data.can_update) {
+        toast.success(`Update available: ${data.behind_by} commit(s) behind origin/${data.branch}.`);
+      } else {
+        toast.success("Already up to date.");
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Update check failed");
+    } finally {
+      setCheckingUpdates(false);
+    }
+  };
+
+  const onApplyUpdate = async () => {
+    setApplyingUpdate(true);
+    try {
+      const data = await applyUpdates();
+      toast.success(data.message || "Update applied. Restart app.");
+      await onCheckUpdates();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Update failed");
+    } finally {
+      setApplyingUpdate(false);
+    }
+  };
+
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 lg:px-8">
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -208,6 +244,44 @@ export function Settings() {
             New pattern
           </button>
         </div>
+      </div>
+
+      <div className="mb-6 rounded-xl border border-border bg-card p-4">
+        <h2 className="mb-2 text-sm font-semibold text-foreground">App updates</h2>
+        <p className="mb-3 text-xs text-muted-foreground">
+          Check GitHub for newer commits and pull the latest changes without manually copying files.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={onCheckUpdates}
+            disabled={checkingUpdates}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-input bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-accent disabled:opacity-50"
+          >
+            <RefreshCcw size={14} className={checkingUpdates ? "animate-spin" : ""} />
+            Check updates
+          </button>
+          <button
+            onClick={onApplyUpdate}
+            disabled={applyingUpdate || !updateInfo?.can_update}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          >
+            <Check size={14} />
+            Update now
+          </button>
+        </div>
+        {updateInfo && (
+          <div className="mt-3 rounded-lg border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+            <p>Branch: <span className="font-medium text-foreground">{updateInfo.branch}</span></p>
+            <p>Current: <code>{updateInfo.current_commit.slice(0, 12)}</code></p>
+            <p>Latest: <code>{updateInfo.latest_commit.slice(0, 12)}</code></p>
+            <p>Ahead/Behind: {updateInfo.ahead_by}/{updateInfo.behind_by}</p>
+            <p className="mt-1">
+              {updateInfo.can_update
+                ? "Update available. Click \"Update now\" then restart app.py."
+                : "You are up to date."}
+            </p>
+          </div>
+        )}
       </div>
 
       {creating && (

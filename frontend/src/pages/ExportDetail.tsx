@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef, type ChangeEvent } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
@@ -11,6 +11,7 @@ import {
   RefreshCcw,
   Info,
   Download,
+  ScanSearch,
 } from "lucide-react";
 import {
   fetchExportDetail,
@@ -18,7 +19,9 @@ import {
   rescanOne,
   fetchScoreExplanation,
   downloadRedactedExport,
+  fetchPiiPatterns,
   type ExportDetail as ExportDetailType,
+  type PiiPattern,
   type ScoreExplanation,
 } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
@@ -36,6 +39,48 @@ import { LazyTreeView } from "@/components/TreeView";
 import { FileListPanel } from "@/components/FileListPanel";
 import { SearchPanel } from "@/components/SearchPanel";
 
+const DEEP_SCAN_TEXT_EXTENSIONS = new Set([
+  "txt", "md", "csv", "json", "xml", "yaml", "yml", "log", "ini", "conf",
+]);
+const DEEP_SCAN_MAX_TEXT_BYTES = 2 * 1024 * 1024;
+const DEEP_SCAN_MAX_ZIP_BYTES = 50 * 1024 * 1024;
+const DEEP_SCAN_MAX_ZIP_ENTRIES = 4000;
+
+function escapeRegex(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function extractZipEntryNames(file: File): Promise<string[]> {
+  return file.arrayBuffer().then((buf) => {
+    const view = new DataView(buf);
+    const bytes = new Uint8Array(buf);
+    const names: string[] = [];
+    for (let i = 0; i + 46 < view.byteLength && names.length < DEEP_SCAN_MAX_ZIP_ENTRIES; i += 1) {
+      if (view.getUint32(i, true) !== 0x02014b50) continue;
+      const nameLen = view.getUint16(i + 28, true);
+      const extraLen = view.getUint16(i + 30, true);
+      const commentLen = view.getUint16(i + 32, true);
+      const nameStart = i + 46;
+      const nameEnd = nameStart + nameLen;
+      if (nameEnd > bytes.length) continue;
+      const name = new TextDecoder().decode(bytes.slice(nameStart, nameEnd));
+      if (name) names.push(name.replace(/\\/g, "/"));
+      i = nameEnd + extraLen + commentLen - 1;
+    }
+    return names;
+  });
+}
+
+type LocalDeepScanResult = {
+  signals: number;
+  text_scanned: number;
+  text_skipped_ext: number;
+  text_skipped_size: number;
+  zip_scanned: number;
+  zip_skipped_size: number;
+  zip_entries_reviewed: number;
+};
+
 export function ExportDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -48,6 +93,9 @@ export function ExportDetail() {
   const [rescanning, setRescanning] = useState(false);
   const [explanation, setExplanation] = useState<ScoreExplanation | null>(null);
   const [explainOpen, setExplainOpen] = useState(false);
+  const [deepScanRunning, setDeepScanRunning] = useState(false);
+  const [deepScanResult, setDeepScanResult] = useState<LocalDeepScanResult | null>(null);
+  const deepScanInputRef = useRef<HTMLInputElement>(null);
 
   const reload = useCallback(() => {
     if (!id) return;
@@ -116,6 +164,77 @@ export function ExportDetail() {
       toast.error(e instanceof Error ? e.message : "Redaction failed");
     }
   };
+
+  const patternMatchCount = useCallback((text: string, patterns: PiiPattern[]) => {
+    const lower = text.toLowerCase();
+    let hits = 0;
+    for (const pattern of patterns) {
+      if (!pattern.enabled) continue;
+      const matched = pattern.keywords.some((kw) => {
+        const escaped = escapeRegex(String(kw || "").trim().toLowerCase());
+        if (!escaped) return false;
+        return new RegExp(`\\b${escaped}\\b`, "i").test(lower);
+      });
+      if (matched) hits += 1;
+    }
+    return hits;
+  }, []);
+
+  const handleDeepScanPick = useCallback(async (e: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
+    setDeepScanRunning(true);
+    try {
+      const patterns = await fetchPiiPatterns();
+      const result: LocalDeepScanResult = {
+        signals: 0,
+        text_scanned: 0,
+        text_skipped_ext: 0,
+        text_skipped_size: 0,
+        zip_scanned: 0,
+        zip_skipped_size: 0,
+        zip_entries_reviewed: 0,
+      };
+
+      for (const file of files) {
+        const lower = file.name.toLowerCase();
+        if (lower.endsWith(".zip")) {
+          if (file.size > DEEP_SCAN_MAX_ZIP_BYTES) {
+            result.zip_skipped_size += 1;
+            continue;
+          }
+          result.zip_scanned += 1;
+          const names = await extractZipEntryNames(file);
+          result.zip_entries_reviewed += names.length;
+          for (const entryName of names.slice(0, DEEP_SCAN_MAX_ZIP_ENTRIES)) {
+            result.signals += patternMatchCount(entryName, patterns);
+          }
+          continue;
+        }
+
+        const ext = lower.split(".").pop() || "";
+        if (!DEEP_SCAN_TEXT_EXTENSIONS.has(ext)) {
+          result.text_skipped_ext += 1;
+          continue;
+        }
+        if (file.size > DEEP_SCAN_MAX_TEXT_BYTES) {
+          result.text_skipped_size += 1;
+          continue;
+        }
+        result.text_scanned += 1;
+        const text = await file.text();
+        result.signals += patternMatchCount(text, patterns);
+      }
+
+      setDeepScanResult(result);
+      toast.success(`Deep scan complete: ${result.signals} signal(s), ${result.zip_entries_reviewed} zip entries reviewed.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Deep scan failed");
+    } finally {
+      e.target.value = "";
+      setDeepScanRunning(false);
+    }
+  }, [patternMatchCount, toast]);
 
   const handleExtClick = useCallback((ext: string) => {
     // Strip the leading dot if present (e.g. ".pdf" -> "pdf")
@@ -194,6 +313,15 @@ export function ExportDetail() {
             Rescan PII
           </button>
           <button
+            onClick={() => deepScanInputRef.current?.click()}
+            disabled={deepScanRunning}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-input bg-background px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+            title="Run local deep scan against a folder on this device"
+          >
+            <ScanSearch size={14} className={deepScanRunning ? "animate-pulse" : ""} />
+            {deepScanRunning ? "Scanning..." : "Run Deep Scan"}
+          </button>
+          <button
             onClick={handleExplain}
             className="inline-flex items-center gap-1.5 rounded-lg border border-input bg-background px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent"
             title="Show how this score was computed"
@@ -215,6 +343,14 @@ export function ExportDetail() {
           </button>
         </div>
       </div>
+      <input
+        ref={deepScanInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={handleDeepScanPick}
+        {...({ webkitdirectory: "true", directory: "" } as Record<string, string>)}
+      />
 
       {/* Stats */}
       <div className="mb-6">
@@ -227,6 +363,35 @@ export function ExportDetail() {
           totalNodes={data.file_count + data.dir_count}
         />
       </div>
+
+      {data.deep_scan_debug?.enabled && (
+        <div className="mb-4 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          <p className="font-medium text-foreground">Deep scan debug</p>
+          <p>
+            Signals: {data.deep_scan_debug.deep_signals} • ZIP entries reviewed:{" "}
+            {data.deep_scan_debug.zip_entries_reviewed}
+          </p>
+          <p>
+            Text scanned: {data.deep_scan_debug.text_files_scanned} • skipped (ext/size):{" "}
+            {data.deep_scan_debug.text_files_skipped_extension}/
+            {data.deep_scan_debug.text_files_skipped_size}
+          </p>
+          <p>
+            ZIP scanned/skipped(size): {data.deep_scan_debug.zip_files_scanned}/
+            {data.deep_scan_debug.zip_files_skipped_size}
+          </p>
+        </div>
+      )}
+
+      {deepScanResult && (
+        <div className="mb-4 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          <p className="font-medium text-foreground">Ad-hoc local deep scan (this device)</p>
+          <p>Signals: {deepScanResult.signals}</p>
+          <p>Text scanned: {deepScanResult.text_scanned} • skipped (ext/size): {deepScanResult.text_skipped_ext}/{deepScanResult.text_skipped_size}</p>
+          <p>ZIP scanned/skipped(size): {deepScanResult.zip_scanned}/{deepScanResult.zip_skipped_size}</p>
+          <p>ZIP entries reviewed: {deepScanResult.zip_entries_reviewed}</p>
+        </div>
+      )}
 
       {explainOpen && (
         <ScoreExplanationPanel
