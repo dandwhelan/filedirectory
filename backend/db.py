@@ -7,9 +7,10 @@ from . import config
 
 
 def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(config.DB_PATH))
+    conn = sqlite3.connect(str(config.DB_PATH), timeout=10.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=10000")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA cache_size=-8000")       # 8 MB page cache
     conn.execute("PRAGMA mmap_size=67108864")      # 64 MB memory-mapped I/O
