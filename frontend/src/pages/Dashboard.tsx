@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import {
   Search,
   Plus,
+  FolderTree,
   ArrowUpDown,
   Database,
   FileJson,
@@ -37,6 +38,7 @@ export function Dashboard() {
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<SortKey>("updated_at");
   const [importOpen, setImportOpen] = useState(false);
+  const [autoPickFolder, setAutoPickFolder] = useState(false);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
@@ -164,6 +166,16 @@ export function Dashboard() {
           >
             <Plus size={16} />
             Import JSON
+          </button>
+          <button
+            onClick={() => {
+              setAutoPickFolder(true);
+              setImportOpen(true);
+            }}
+            className="inline-flex items-center gap-2 rounded-lg border border-input bg-background px-3 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+          >
+            <FolderTree size={14} />
+            All Local Folder
           </button>
         </div>
       </div>
@@ -402,8 +414,12 @@ export function Dashboard() {
 
       <ImportDialog
         open={importOpen}
-        onClose={() => setImportOpen(false)}
+        onClose={() => {
+          setImportOpen(false);
+          setAutoPickFolder(false);
+        }}
         onImported={handleImported}
+        autoPickFolder={autoPickFolder}
       />
     </div>
   );

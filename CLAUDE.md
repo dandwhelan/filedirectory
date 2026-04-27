@@ -55,12 +55,15 @@ Frontend (`frontend/src/`):
 - `App.tsx` — routes: `/`, `/export/:id`, `/settings`, `/diff`. Wraps children
   in `ErrorBoundary` + `ToastProvider`; registers global hotkeys.
 - `pages/Dashboard.tsx` — grid, stats cards, search/sort, Compare + Print
-  buttons.
+  buttons, plus top-bar import actions ("Import JSON" and "All Local Folder").
 - `pages/ExportDetail.tsx` — tree + charts + PII table for one export.
 - `pages/Settings.tsx` — PII pattern editor (CRUD + rescan-all).
 - `pages/Diff.tsx` — side-by-side diff between two imports.
 - `pages/Trash.tsx` — list of soft-deleted exports with restore + purge.
 - `components/TreeView.tsx` — lazy-loaded tree (100 nodes/page).
+- `components/ImportDialog.tsx` — JSON import modal with file import and
+  recursive local-folder export generation/import (directory picker +
+  `webkitdirectory` fallback).
 - `components/PiiTable.tsx` — sortable findings + JSON/CSV export.
 - `components/Charts.tsx` — Recharts donut + bar.
 - `components/{ErrorBoundary,ShortcutsModal}.tsx` — global UX.
