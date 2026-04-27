@@ -50,10 +50,37 @@ export interface DepthCount {
 
 export interface ExportDetail extends ExportSummary {
   pii_signals: PiiSignal[];
+  pii_signal_total: number;
+  pii_signals_truncated: boolean;
   file_type_counts: FileTypeCount[];
   file_size_by_type: FileTypeCount[];
   top_largest_files: LargestFile[];
   depth_distribution: DepthCount[];
+}
+
+export interface TrashEntry extends ExportSummary {
+  deleted_at: string;
+}
+
+export interface ScoreExplanation {
+  export_id: number;
+  filename: string;
+  score: number;
+  band: string;
+  stored_score: number;
+  stored_band: string;
+  signal_count: number;
+  relevant_node_count: number;
+  components: {
+    intensity: number;
+    breadth: number;
+    density_bonus: number;
+  };
+  raw_total: number;
+  category_count: number;
+  by_category: { category: string; count: number; raw_score: number }[];
+  by_severity: { high: number; medium: number; low: number };
+  formula: string;
 }
 
 export interface PaginatedExports {
@@ -339,4 +366,51 @@ export async function fetchDiff(a: number, b: number): Promise<DiffResult> {
   const res = await fetch(`${API_BASE}/diff?a=${a}&b=${b}`);
   if (!res.ok) throw new Error((await res.json()).error || "Failed to compute diff");
   return res.json();
+}
+
+// --- Trash / soft delete ---
+
+export async function fetchTrash(): Promise<TrashEntry[]> {
+  const res = await fetch(`${API_BASE}/trash`);
+  if (!res.ok) throw new Error("Failed to load trash");
+  const data = await res.json();
+  return data.trash;
+}
+
+export async function restoreExport(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/export/${id}/restore`, { method: "POST" });
+  if (!res.ok) throw new Error((await res.json()).error || "Failed to restore");
+}
+
+export async function purgeExport(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/export/${id}/purge`, { method: "POST" });
+  if (!res.ok) throw new Error((await res.json()).error || "Failed to purge");
+}
+
+// --- Score explanation ---
+
+export async function fetchScoreExplanation(id: number): Promise<ScoreExplanation> {
+  const res = await fetch(`${API_BASE}/export/${id}/explain`);
+  if (!res.ok) throw new Error((await res.json()).error || "Failed to load explanation");
+  return res.json();
+}
+
+// --- Redaction export ---
+
+export function redactionExportUrl(id: number): string {
+  return `${API_BASE}/export/${id}/redact`;
+}
+
+export async function downloadRedactedExport(id: number, filename: string): Promise<void> {
+  const res = await fetch(redactionExportUrl(id));
+  if (!res.ok) throw new Error("Failed to generate redacted export");
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `redacted_${filename}`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }

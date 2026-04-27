@@ -8,9 +8,21 @@ import {
   FolderOpen,
   FileText,
   Calendar,
+  RefreshCcw,
+  Info,
+  Download,
 } from "lucide-react";
-import { fetchExportDetail, deleteExport, type ExportDetail as ExportDetailType } from "@/lib/api";
+import {
+  fetchExportDetail,
+  deleteExport,
+  rescanOne,
+  fetchScoreExplanation,
+  downloadRedactedExport,
+  type ExportDetail as ExportDetailType,
+  type ScoreExplanation,
+} from "@/lib/api";
 import { formatDate } from "@/lib/utils";
+import { useToast } from "@/hooks/useToast";
 import { StatsRow } from "@/components/StatsRow";
 import {
   FileTypeChart,
@@ -27,13 +39,17 @@ import { SearchPanel } from "@/components/SearchPanel";
 export function ExportDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const toast = useToast();
   const [data, setData] = useState<ExportDetailType | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [treeFilter, setTreeFilter] = useState("");
   const [selectedExt, setSelectedExt] = useState<string | null>(null);
+  const [rescanning, setRescanning] = useState(false);
+  const [explanation, setExplanation] = useState<ScoreExplanation | null>(null);
+  const [explainOpen, setExplainOpen] = useState(false);
 
-  useEffect(() => {
+  const reload = useCallback(() => {
     if (!id) return;
     setLoading(true);
     fetchExportDetail(Number(id))
@@ -42,15 +58,62 @@ export function ExportDetail() {
       .finally(() => setLoading(false));
   }, [id]);
 
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
   const handleDelete = async () => {
     if (!data) return;
-    if (!window.confirm(`Delete "${data.filename}"? This cannot be undone.`))
+    if (
+      !window.confirm(
+        `Move "${data.filename}" to trash? You can restore it later from the trash page.`
+      )
+    )
       return;
     try {
       await deleteExport(data.id);
       navigate("/");
     } catch {
       alert("Failed to delete export");
+    }
+  };
+
+  const handleRescan = async () => {
+    if (!data) return;
+    setRescanning(true);
+    try {
+      const r = await rescanOne(data.id);
+      toast.success(
+        `Rescanned: score ${r.pii_score} (${r.pii_band}), ${r.signal_count} signal${r.signal_count === 1 ? "" : "s"}`
+      );
+      // Pull fresh detail so charts/table reflect the new findings.
+      reload();
+      setExplanation(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Rescan failed");
+    } finally {
+      setRescanning(false);
+    }
+  };
+
+  const handleExplain = async () => {
+    if (!data) return;
+    setExplainOpen(true);
+    if (explanation && explanation.export_id === data.id) return;
+    try {
+      const r = await fetchScoreExplanation(data.id);
+      setExplanation(r);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to explain score");
+    }
+  };
+
+  const handleRedact = async () => {
+    if (!data) return;
+    try {
+      await downloadRedactedExport(data.id, data.filename);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Redaction failed");
     }
   };
 
@@ -120,12 +183,37 @@ export function ExportDetail() {
           </div>
         </div>
 
-        <button
-          onClick={handleDelete}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/30 px-3 py-2 text-sm font-medium text-destructive transition-colors hover:bg-destructive/10"
-        >
-          <Trash2 size={14} /> Delete
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={handleRescan}
+            disabled={rescanning}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-input bg-background px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+            title="Recompute PII findings using the current pattern set"
+          >
+            <RefreshCcw size={14} className={rescanning ? "animate-spin" : ""} />
+            Rescan PII
+          </button>
+          <button
+            onClick={handleExplain}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-input bg-background px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+            title="Show how this score was computed"
+          >
+            <Info size={14} /> Explain score
+          </button>
+          <button
+            onClick={handleRedact}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-input bg-background px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+            title="Download a copy with PII-flagged file names masked"
+          >
+            <Download size={14} /> Redact
+          </button>
+          <button
+            onClick={handleDelete}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/30 px-3 py-2 text-sm font-medium text-destructive transition-colors hover:bg-destructive/10"
+          >
+            <Trash2 size={14} /> Move to trash
+          </button>
+        </div>
       </div>
 
       {/* Stats */}
@@ -139,6 +227,22 @@ export function ExportDetail() {
           totalNodes={data.file_count + data.dir_count}
         />
       </div>
+
+      {explainOpen && (
+        <ScoreExplanationPanel
+          loading={!explanation || explanation.export_id !== data.id}
+          explanation={explanation}
+          onClose={() => setExplainOpen(false)}
+        />
+      )}
+
+      {data.pii_signals_truncated && (
+        <div className="mb-4 rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-700 dark:text-yellow-400">
+          Showing top {data.pii_signals.length} of {data.pii_signal_total} PII
+          signals (sorted by score). Lower-scoring matches are omitted from
+          the table for performance.
+        </div>
+      )}
 
       {/* File Search */}
       <div className="mb-6">
@@ -232,5 +336,124 @@ export function ExportDetail() {
         <LazyTreeView exportId={data.id} filter={treeFilter} />
       </div>
     </div>
+  );
+}
+
+function ScoreExplanationPanel({
+  loading,
+  explanation,
+  onClose,
+}: {
+  loading: boolean;
+  explanation: ScoreExplanation | null;
+  onClose: () => void;
+}) {
+  return (
+    <div className="mb-6 rounded-xl border border-primary/30 bg-primary/5 p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-foreground">
+          How this score was computed
+        </h3>
+        <button
+          onClick={onClose}
+          className="text-xs text-muted-foreground hover:text-foreground"
+        >
+          Close
+        </button>
+      </div>
+      {loading || !explanation ? (
+        <div className="py-4 text-sm text-muted-foreground">Loading…</div>
+      ) : (
+        <div className="space-y-3 text-sm">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Component
+              label="Intensity"
+              value={explanation.components.intensity}
+              hint={`raw_total (${explanation.raw_total}) ÷ relevant_nodes (${explanation.relevant_node_count}) × 8`}
+            />
+            <Component
+              label="Breadth"
+              value={explanation.components.breadth}
+              hint={`${explanation.category_count} categor${explanation.category_count === 1 ? "y" : "ies"} × 4`}
+            />
+            <Component
+              label="Density bonus"
+              value={explanation.components.density_bonus}
+              hint={`${explanation.signal_count} signal${explanation.signal_count === 1 ? "" : "s"} ÷ ${explanation.relevant_node_count} nodes (capped at 20)`}
+            />
+          </div>
+          <div className="rounded-lg bg-background/60 px-3 py-2 text-xs">
+            <div className="font-mono text-muted-foreground">
+              {explanation.formula}
+            </div>
+            <div className="mt-1 text-foreground">
+              Final: <span className="font-semibold">{explanation.score}</span>{" "}
+              ({explanation.band}) — stored:{" "}
+              {explanation.stored_score} ({explanation.stored_band})
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <div className="mb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                By severity
+              </div>
+              <div className="flex gap-2 text-xs">
+                <Pill label="High" value={explanation.by_severity.high} />
+                <Pill label="Medium" value={explanation.by_severity.medium} />
+                <Pill label="Low" value={explanation.by_severity.low} />
+              </div>
+            </div>
+            <div>
+              <div className="mb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Top categories
+              </div>
+              <ul className="space-y-1 text-xs">
+                {explanation.by_category.slice(0, 5).map((c) => (
+                  <li key={c.category} className="flex justify-between">
+                    <span className="text-foreground">{c.category}</span>
+                    <span className="tabular-nums text-muted-foreground">
+                      {c.count} hit{c.count === 1 ? "" : "s"} · raw {c.raw_score}
+                    </span>
+                  </li>
+                ))}
+                {explanation.by_category.length === 0 && (
+                  <li className="italic text-muted-foreground">No matches</li>
+                )}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Component({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: number;
+  hint: string;
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-background/40 px-3 py-2">
+      <div className="text-xs uppercase tracking-wider text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-0.5 text-xl font-semibold tabular-nums text-foreground">
+        {value}
+      </div>
+      <div className="mt-0.5 text-[11px] text-muted-foreground">{hint}</div>
+    </div>
+  );
+}
+
+function Pill({ label, value }: { label: string; value: number }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 font-medium text-foreground">
+      {label}: <span className="tabular-nums">{value}</span>
+    </span>
   );
 }

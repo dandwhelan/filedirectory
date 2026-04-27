@@ -128,6 +128,17 @@ def _migrate(conn: sqlite3.Connection) -> None:
         )
         _mark_applied(conn, 2)
 
+    # 003: soft delete for exports — adds deleted_at timestamp + index.
+    if not _applied(conn, 3):
+        if not _column_exists(conn, "exports", "deleted_at"):
+            conn.execute(
+                "ALTER TABLE exports ADD COLUMN deleted_at TEXT NOT NULL DEFAULT ''"
+            )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_exports_deleted_at ON exports(deleted_at)"
+        )
+        _mark_applied(conn, 3)
+
     conn.commit()
 
 

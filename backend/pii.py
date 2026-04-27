@@ -363,7 +363,13 @@ def _text_matches_pattern(text: str, pattern: dict) -> bool:
 
 def compute_pii(nodes_flat: list[dict],
                 patterns: list[dict]) -> tuple[list[dict], int, str]:
-    """Run PII detection. Returns (signals, normalized_score, band)."""
+    """Run PII detection. Returns (signals, normalized_score, band).
+
+    Each signal includes a ``node_path`` so callers can resolve the matching
+    ``nodes`` row after insert and backfill the ``node_id`` foreign key. A
+    single (node, pattern) pair never produces more than one signal even when
+    multiple keywords from the same pattern match the concatenated name+path.
+    """
     relevant_nodes = [n for n in nodes_flat if is_pii_relevant(n)]
     signals: list[dict] = []
     for node in relevant_nodes:
@@ -376,6 +382,8 @@ def compute_pii(nodes_flat: list[dict],
                     "severity": pat["severity"],
                     "score": pat["score"],
                     "location": node.get("path") or node.get("name") or "(unknown)",
+                    "node_path": node.get("path") or "",
+                    "node_name": node.get("name") or "",
                 })
 
     total_raw = sum(s["score"] for s in signals)
@@ -400,3 +408,58 @@ def compute_pii(nodes_flat: list[dict],
         band = "Low"
 
     return signals, normalized, band
+
+
+def explain_score(signals: list[dict], total_relevant_nodes: int) -> dict:
+    """Break down a PII score into its three contributing terms.
+
+    Returns the same arithmetic ``compute_pii`` performs, plus a
+    per-category and per-severity tally so the UI can render a useful
+    "why does this export score X?" panel.
+    """
+    total_raw = sum(int(s.get("score", 0)) for s in signals)
+    categories = sorted({s.get("category", "") for s in signals if s.get("category")})
+    total_nodes = max(int(total_relevant_nodes), 1)
+
+    density = len(signals) / total_nodes
+    density_bonus = min(20, round(density * 40))
+    intensity = round((total_raw / total_nodes) * 8)
+    breadth = len(categories) * 4
+    final_score = min(100, intensity + breadth + density_bonus)
+
+    by_category: dict[str, dict] = {}
+    by_severity: dict[str, int] = {"high": 0, "medium": 0, "low": 0}
+    for s in signals:
+        cat = s.get("category") or "Other"
+        bucket = by_category.setdefault(cat, {"category": cat, "count": 0, "raw_score": 0})
+        bucket["count"] += 1
+        bucket["raw_score"] += int(s.get("score", 0))
+        sev = (s.get("severity") or "").lower()
+        if sev in by_severity:
+            by_severity[sev] += 1
+
+    if final_score >= 70:
+        band = "High"
+    elif final_score >= 35:
+        band = "Medium"
+    else:
+        band = "Low"
+
+    return {
+        "score": final_score,
+        "band": band,
+        "signal_count": len(signals),
+        "relevant_node_count": total_nodes,
+        "components": {
+            "intensity": intensity,
+            "breadth": breadth,
+            "density_bonus": density_bonus,
+        },
+        "raw_total": total_raw,
+        "category_count": len(categories),
+        "by_category": sorted(
+            by_category.values(), key=lambda x: x["raw_score"], reverse=True
+        ),
+        "by_severity": by_severity,
+        "formula": "score = min(100, round(raw_total/nodes * 8) + categories * 4 + min(20, round(signals/nodes * 40)))",
+    }

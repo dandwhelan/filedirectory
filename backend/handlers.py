@@ -41,6 +41,8 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
             return self._handle_overview()
         if parsed.path == "/api/exports":
             return self._handle_exports_list(params)
+        if parsed.path == "/api/trash":
+            return self._handle_trash_list()
         if parsed.path == "/api/search":
             return self._handle_global_search(params)
         if parsed.path == "/api/diff":
@@ -61,6 +63,10 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
                     return self._handle_files_by_type(export_id, params)
                 if len(parts) >= 5 and parts[4] == "search":
                     return self._handle_search(export_id, params)
+                if len(parts) >= 5 and parts[4] == "explain":
+                    return self._handle_explain_score(export_id)
+                if len(parts) >= 5 and parts[4] == "redact":
+                    return self._handle_redaction_export(export_id)
                 return self._handle_export_detail(export_id)
             return self._error_response(HTTPStatus.BAD_REQUEST, "Invalid export ID")
 
@@ -92,6 +98,18 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
                 return self._error_response(HTTPStatus.BAD_REQUEST, "Invalid export ID")
             return self._handle_rescan_one(export_id)
 
+        if parsed.path.startswith("/api/export/"):
+            parts = parsed.path.split("/")
+            if len(parts) >= 5:
+                try:
+                    export_id = int(parts[3])
+                except ValueError:
+                    return self._error_response(HTTPStatus.BAD_REQUEST, "Invalid export ID")
+                if parts[4] == "restore":
+                    return self._handle_restore_export(export_id)
+                if parts[4] == "purge":
+                    return self._handle_purge_export(export_id)
+
         return self._error_response(HTTPStatus.NOT_FOUND, "Unknown endpoint")
 
     def do_PUT(self):
@@ -116,13 +134,13 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
 
         if parsed.path.startswith("/api/export/"):
             parts = parsed.path.split("/")
-            if len(parts) >= 4:
-                try:
-                    export_id = int(parts[3])
-                    return self._handle_delete_export(export_id)
-                except ValueError:
-                    pass
-            return self._error_response(HTTPStatus.BAD_REQUEST, "Invalid export ID")
+            if len(parts) < 4:
+                return self._error_response(HTTPStatus.BAD_REQUEST, "Invalid export ID")
+            try:
+                export_id = int(parts[3])
+            except ValueError:
+                return self._error_response(HTTPStatus.BAD_REQUEST, "Invalid export ID")
+            return self._handle_delete_export(export_id)
 
         return self._error_response(HTTPStatus.NOT_FOUND, "Unknown endpoint")
 
@@ -131,8 +149,11 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
     # ------------------------------------------------------------------
 
     def _handle_exports_list(self, params: dict):
-        page = max(1, int(params.get("page", ["1"])[0]))
-        per_page = min(100, max(1, int(params.get("per_page", ["20"])[0])))
+        try:
+            page = max(1, int(params.get("page", ["1"])[0]))
+            per_page = min(100, max(1, int(params.get("per_page", ["20"])[0])))
+        except ValueError:
+            return self._error_response(HTTPStatus.BAD_REQUEST, "page/per_page must be integers")
         search = params.get("search", [""])[0].strip()
         sort = params.get("sort", ["updated_at"])[0]
         order = params.get("order", ["desc"])[0].upper()
@@ -145,10 +166,13 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
 
         conn = get_db()
 
-        where_clause = ""
+        where_clause = "WHERE deleted_at = ''"
         where_params: list = []
         if search:
-            where_clause = "WHERE filename LIKE ? OR company LIKE ? OR description LIKE ? OR folder LIKE ?"
+            where_clause += (
+                " AND (filename LIKE ? OR company LIKE ? OR "
+                "description LIKE ? OR folder LIKE ?)"
+            )
             like = f"%{search}%"
             where_params = [like, like, like, like]
 
@@ -188,15 +212,18 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
                    COALESCE(SUM(dir_count), 0) as total_dirs,
                    COALESCE(SUM(total_size), 0) as total_size,
                    COALESCE(ROUND(AVG(pii_score)), 0) as avg_pii_score
-            FROM exports
+            FROM exports WHERE deleted_at = ''
         """).fetchone()
 
         band_rows = conn.execute(
-            "SELECT pii_band, COUNT(*) as count FROM exports GROUP BY pii_band"
+            "SELECT pii_band, COUNT(*) as count FROM exports "
+            "WHERE deleted_at = '' GROUP BY pii_band"
         ).fetchall()
 
         ext_rows = conn.execute(
-            "SELECT name FROM nodes WHERE is_dir = 0"
+            "SELECT n.name FROM nodes n "
+            "JOIN exports e ON e.id = n.export_id "
+            "WHERE n.is_dir = 0 AND e.deleted_at = ''"
         ).fetchall()
         ext_counts: dict[str, int] = {}
         for r in ext_rows:
@@ -227,7 +254,7 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
         row = conn.execute("""
             SELECT id, filename, company, folder, description, imported_at, updated_at,
                    file_count, dir_count, total_size, pii_score, pii_band
-            FROM exports WHERE id = ?
+            FROM exports WHERE id = ? AND deleted_at = ''
         """, (export_id,)).fetchone()
         if not row:
             conn.close()
@@ -235,11 +262,20 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
 
         export_data = dict(row)
 
+        # Cap signals to avoid unbounded payloads on pathological exports.
+        # Total count is exposed separately so the UI can warn the user.
+        pii_total = conn.execute(
+            "SELECT COUNT(*) FROM pii_signals WHERE export_id = ?",
+            (export_id,),
+        ).fetchone()[0]
         pii_rows = conn.execute("""
             SELECT pattern_label, category, severity, score, location
             FROM pii_signals WHERE export_id = ? ORDER BY score DESC
+            LIMIT 1000
         """, (export_id,)).fetchall()
         export_data["pii_signals"] = [dict(r) for r in pii_rows]
+        export_data["pii_signal_total"] = pii_total
+        export_data["pii_signals_truncated"] = pii_total > len(pii_rows)
 
         file_rows = conn.execute(
             "SELECT name, size FROM nodes WHERE export_id = ? AND is_dir = 0",
@@ -291,12 +327,17 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
 
     def _handle_export_children(self, export_id: int, params: dict):
         parent_id_str = params.get("parent_id", [""])[0]
-        limit = min(500, max(1, int(params.get("limit", ["100"])[0])))
-        offset = max(0, int(params.get("offset", ["0"])[0]))
+        try:
+            limit = min(500, max(1, int(params.get("limit", ["100"])[0])))
+            offset = max(0, int(params.get("offset", ["0"])[0]))
+        except ValueError:
+            return self._error_response(HTTPStatus.BAD_REQUEST, "limit/offset must be integers")
 
         conn = get_db()
 
-        if not conn.execute("SELECT 1 FROM exports WHERE id = ?", (export_id,)).fetchone():
+        if not conn.execute(
+            "SELECT 1 FROM exports WHERE id = ? AND deleted_at = ''", (export_id,)
+        ).fetchone():
             conn.close()
             return self._error_response(HTTPStatus.NOT_FOUND, "Export not found")
 
@@ -361,7 +402,9 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
             return self._error_response(HTTPStatus.BAD_REQUEST, "Missing ext parameter")
 
         conn = get_db()
-        if not conn.execute("SELECT 1 FROM exports WHERE id = ?", (export_id,)).fetchone():
+        if not conn.execute(
+            "SELECT 1 FROM exports WHERE id = ? AND deleted_at = ''", (export_id,)
+        ).fetchone():
             conn.close()
             return self._error_response(HTTPStatus.NOT_FOUND, "Export not found")
 
@@ -385,7 +428,9 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
             return self._json_response({"results": [], "count": 0, "query": query})
 
         conn = get_db()
-        if not conn.execute("SELECT 1 FROM exports WHERE id = ?", (export_id,)).fetchone():
+        if not conn.execute(
+            "SELECT 1 FROM exports WHERE id = ? AND deleted_at = ''", (export_id,)
+        ).fetchone():
             conn.close()
             return self._error_response(HTTPStatus.NOT_FOUND, "Export not found")
 
@@ -430,7 +475,8 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
                        n.export_id, e.filename AS export_filename
                 FROM nodes n
                 JOIN exports e ON e.id = n.export_id
-                WHERE LOWER(n.name) LIKE LOWER(?) OR LOWER(n.path) LIKE LOWER(?)
+                WHERE e.deleted_at = ''
+                  AND (LOWER(n.name) LIKE LOWER(?) OR LOWER(n.path) LIKE LOWER(?))
                 ORDER BY n.is_dir DESC, n.name ASC
                 LIMIT ?
             """, (like, like, limit)).fetchall()
@@ -497,25 +543,60 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
             )
 
         DATA_DIR.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(parsed_file, indent=2), encoding="utf-8")
-        stat = target.stat()
-        sha = hash_file_path(target)
+        # Stage the file under a temp name so a DB failure doesn't leave an
+        # orphan JSON that the next startup sync would silently reimport.
+        tmp_path = target.with_suffix(target.suffix + ".tmp")
+        tmp_path.write_text(json.dumps(parsed_file, indent=2), encoding="utf-8")
 
-        conn = get_db()
         try:
-            result = store_export(
-                conn, filename, parsed_file, overwrite,
-                source_sha256=sha, source_mtime=stat.st_mtime,
-            )
-        finally:
-            conn.close()
+            conn = get_db()
+            try:
+                stat = tmp_path.stat()
+                sha = hash_file_path(tmp_path)
+                result = store_export(
+                    conn, filename, parsed_file, overwrite,
+                    source_sha256=sha, source_mtime=stat.st_mtime,
+                )
+            finally:
+                conn.close()
+        except Exception:
+            tmp_path.unlink(missing_ok=True)
+            raise
 
         if result.get("conflict"):
+            tmp_path.unlink(missing_ok=True)
+            if result.get("in_trash"):
+                return self._json_response({
+                    "error": (
+                        f"'{result['name']}' is in the trash. "
+                        "Restore or purge it before re-importing."
+                    ),
+                    "code": "file_in_trash",
+                    "name": result["name"],
+                }, status=HTTPStatus.CONFLICT)
             return self._json_response({
                 "error": "File already exists. Re-submit with overwrite=true after confirmation.",
                 "code": "file_exists",
                 "name": result["name"],
             }, status=HTTPStatus.CONFLICT)
+
+        # Promote temp -> final atomically, then refresh sha/mtime on the
+        # renamed file (mtime can shift on rename on some filesystems).
+        tmp_path.replace(target)
+        try:
+            stat = target.stat()
+            new_sha = hash_file_path(target)
+            conn = get_db()
+            try:
+                conn.execute(
+                    "UPDATE exports SET source_sha256 = ?, source_mtime = ? WHERE id = ?",
+                    (new_sha, stat.st_mtime, result["id"]),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        except OSError:
+            pass
 
         self._json_response({
             "message": f"Imported {result['name']}",
@@ -525,24 +606,238 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
         }, HTTPStatus.CREATED)
 
     def _handle_delete_export(self, export_id: int):
+        """Soft delete: mark deleted_at and rename the data file out of the
+        glob path so startup sync ignores it. The row + JSON stay on disk
+        until the user purges them from the trash UI."""
+        import time as _time
         conn = get_db()
         row = conn.execute(
-            "SELECT filename FROM exports WHERE id = ?", (export_id,)
+            "SELECT filename, deleted_at FROM exports WHERE id = ?", (export_id,)
         ).fetchone()
         if not row:
             conn.close()
             return self._error_response(HTTPStatus.NOT_FOUND, "Export not found")
+        if row["deleted_at"]:
+            conn.close()
+            return self._error_response(HTTPStatus.CONFLICT, "Already deleted")
+
+        filename = row["filename"]
+        now = _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime())
+        conn.execute(
+            "UPDATE exports SET deleted_at = ? WHERE id = ?", (now, export_id)
+        )
+        conn.commit()
+        conn.close()
+
+        data_file = DATA_DIR / filename
+        trashed = data_file.with_suffix(data_file.suffix + ".deleted")
+        try:
+            if data_file.exists():
+                data_file.replace(trashed)
+        except OSError:
+            pass
+
+        self._json_response({
+            "message": f"Moved {filename} to trash",
+            "name": filename,
+            "deleted_at": now,
+        })
+
+    def _handle_trash_list(self):
+        conn = get_db()
+        rows = conn.execute(
+            "SELECT id, filename, company, folder, description, "
+            "imported_at, updated_at, file_count, dir_count, total_size, "
+            "pii_score, pii_band, deleted_at "
+            "FROM exports WHERE deleted_at != '' "
+            "ORDER BY deleted_at DESC"
+        ).fetchall()
+        conn.close()
+        self._json_response({"trash": [dict(r) for r in rows]})
+
+    def _handle_restore_export(self, export_id: int):
+        conn = get_db()
+        row = conn.execute(
+            "SELECT filename, deleted_at FROM exports WHERE id = ?", (export_id,)
+        ).fetchone()
+        if not row:
+            conn.close()
+            return self._error_response(HTTPStatus.NOT_FOUND, "Export not found")
+        if not row["deleted_at"]:
+            conn.close()
+            return self._error_response(HTTPStatus.CONFLICT, "Export is not in trash")
+
+        filename = row["filename"]
+        # If a different live row now owns this filename, refuse — the user
+        # must purge or rename.
+        clash = conn.execute(
+            "SELECT id FROM exports WHERE filename = ? AND deleted_at = '' AND id != ?",
+            (filename, export_id),
+        ).fetchone()
+        if clash:
+            conn.close()
+            return self._error_response(
+                HTTPStatus.CONFLICT,
+                f"Cannot restore: another export already uses '{filename}'",
+            )
+
+        conn.execute("UPDATE exports SET deleted_at = '' WHERE id = ?", (export_id,))
+        conn.commit()
+        conn.close()
+
+        data_file = DATA_DIR / filename
+        trashed = data_file.with_suffix(data_file.suffix + ".deleted")
+        try:
+            if trashed.exists() and not data_file.exists():
+                trashed.replace(data_file)
+        except OSError:
+            pass
+
+        self._json_response({"message": f"Restored {filename}", "id": export_id})
+
+    def _handle_purge_export(self, export_id: int):
+        """Hard delete a soft-deleted export: removes DB rows + the .deleted file."""
+        conn = get_db()
+        row = conn.execute(
+            "SELECT filename, deleted_at FROM exports WHERE id = ?", (export_id,)
+        ).fetchone()
+        if not row:
+            conn.close()
+            return self._error_response(HTTPStatus.NOT_FOUND, "Export not found")
+        if not row["deleted_at"]:
+            conn.close()
+            return self._error_response(
+                HTTPStatus.CONFLICT, "Export must be deleted before it can be purged",
+            )
 
         filename = row["filename"]
         conn.execute("DELETE FROM exports WHERE id = ?", (export_id,))
         conn.commit()
         conn.close()
 
-        data_file = DATA_DIR / filename
-        if data_file.exists():
-            data_file.unlink()
+        for suffix in (".deleted", ""):
+            p = DATA_DIR / (filename + suffix if suffix else filename)
+            try:
+                p.unlink(missing_ok=True)
+            except OSError:
+                pass
 
-        self._json_response({"message": f"Deleted {filename}", "name": filename})
+        self._json_response({"message": f"Purged {filename}", "id": export_id})
+
+    # ------------------------------------------------------------------
+    # Score explanation
+    # ------------------------------------------------------------------
+
+    def _handle_explain_score(self, export_id: int):
+        conn = get_db()
+        try:
+            row = conn.execute(
+                "SELECT id, filename, pii_score, pii_band, file_count, dir_count "
+                "FROM exports WHERE id = ? AND deleted_at = ''",
+                (export_id,),
+            ).fetchone()
+            if not row:
+                return self._error_response(HTTPStatus.NOT_FOUND, "Export not found")
+
+            signals = [
+                dict(r) for r in conn.execute(
+                    "SELECT pattern_label, category, severity, score, location "
+                    "FROM pii_signals WHERE export_id = ?", (export_id,)
+                ).fetchall()
+            ]
+            # Mirror compute_pii's "relevant nodes" denominator.
+            from .pii import is_pii_relevant, explain_score
+            node_rows = conn.execute(
+                "SELECT name, path, is_dir FROM nodes WHERE export_id = ?",
+                (export_id,),
+            ).fetchall()
+        finally:
+            conn.close()
+
+        relevant = sum(
+            1 for r in node_rows
+            if is_pii_relevant({"name": r["name"], "path": r["path"], "is_dir": r["is_dir"]})
+        )
+        breakdown = explain_score(signals, relevant)
+        breakdown["export_id"] = row["id"]
+        breakdown["filename"] = row["filename"]
+        breakdown["stored_score"] = row["pii_score"]
+        breakdown["stored_band"] = row["pii_band"]
+        self._json_response(breakdown)
+
+    # ------------------------------------------------------------------
+    # Redaction export
+    # ------------------------------------------------------------------
+
+    def _handle_redaction_export(self, export_id: int):
+        """Return the export's raw_json with PII-flagged paths' names masked.
+
+        Useful for sharing structure without leaking sensitive filenames.
+        """
+        conn = get_db()
+        try:
+            row = conn.execute(
+                "SELECT filename, raw_json FROM exports WHERE id = ? AND deleted_at = ''",
+                (export_id,),
+            ).fetchone()
+            if not row:
+                return self._error_response(HTTPStatus.NOT_FOUND, "Export not found")
+
+            sig_rows = conn.execute(
+                "SELECT DISTINCT location FROM pii_signals WHERE export_id = ?",
+                (export_id,),
+            ).fetchall()
+        finally:
+            conn.close()
+
+        try:
+            data = json.loads(row["raw_json"])
+        except (ValueError, TypeError):
+            return self._error_response(
+                HTTPStatus.UNPROCESSABLE_ENTITY, "Stored JSON is not parseable"
+            )
+
+        flagged_paths = {r["location"] for r in sig_rows if r["location"]}
+
+        def _mask_name(name: str) -> str:
+            if not name:
+                return "[REDACTED]"
+            idx = name.rfind(".")
+            if idx > 0:
+                return f"[REDACTED]{name[idx:]}"
+            return "[REDACTED]"
+
+        redaction_count = 0
+
+        def _walk(children: list) -> None:
+            nonlocal redaction_count
+            for child in children:
+                if not isinstance(child, dict):
+                    continue
+                if child.get("path") in flagged_paths:
+                    child["name"] = _mask_name(child.get("name", ""))
+                    child["redacted"] = True
+                    redaction_count += 1
+                if isinstance(child.get("children"), list):
+                    _walk(child["children"])
+
+        _walk(data.get("children", []))
+
+        data.setdefault("_meta", {})
+        data["_meta"]["redacted"] = True
+        data["_meta"]["redaction_count"] = redaction_count
+        data["_meta"]["source_filename"] = row["filename"]
+
+        body = json.dumps(data, indent=2).encode("utf-8")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/json")
+        self.send_header(
+            "Content-Disposition",
+            f'attachment; filename="redacted_{row["filename"]}"',
+        )
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     # ------------------------------------------------------------------
     # PII pattern CRUD + rescan
@@ -655,7 +950,7 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
         try:
             meta_rows = conn.execute(
                 "SELECT id, filename, company, total_size, file_count, dir_count, pii_score "
-                "FROM exports WHERE id IN (?, ?)",
+                "FROM exports WHERE id IN (?, ?) AND deleted_at = ''",
                 (a, b),
             ).fetchall()
             by_id = {r["id"]: dict(r) for r in meta_rows}

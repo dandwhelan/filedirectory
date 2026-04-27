@@ -1,6 +1,12 @@
 import { BrowserRouter, Routes, Route, Link, useNavigate } from "react-router-dom";
 import { useState } from "react";
-import { ShieldCheck, Settings as SettingsIcon, GitCompare, Keyboard } from "lucide-react";
+import {
+  ShieldCheck,
+  Settings as SettingsIcon,
+  GitCompare,
+  Keyboard,
+  Trash2,
+} from "lucide-react";
 import { useTheme } from "@/lib/theme";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -11,6 +17,7 @@ import { Dashboard } from "@/pages/Dashboard";
 import { ExportDetail } from "@/pages/ExportDetail";
 import { Settings } from "@/pages/Settings";
 import { Diff } from "@/pages/Diff";
+import { Trash } from "@/pages/Trash";
 
 function Shell() {
   const { theme, toggle } = useTheme();
@@ -21,6 +28,7 @@ function Shell() {
   useHotkey("g d", () => navigate("/"));
   useHotkey("g s", () => navigate("/settings"));
   useHotkey("g c", () => navigate("/diff"));
+  useHotkey("g t", () => navigate("/trash"));
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -45,6 +53,14 @@ function Shell() {
             >
               <GitCompare size={15} />
               <span className="hidden sm:inline">Compare</span>
+            </Link>
+            <Link
+              to="/trash"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              aria-label="Trash"
+            >
+              <Trash2 size={15} />
+              <span className="hidden sm:inline">Trash</span>
             </Link>
             <Link
               to="/settings"
@@ -73,6 +89,7 @@ function Shell() {
           <Route path="/export/:id" element={<ExportDetail />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/diff" element={<Diff />} />
+          <Route path="/trash" element={<Trash />} />
         </Routes>
       </main>
 
