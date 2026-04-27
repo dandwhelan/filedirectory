@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { Upload, X, FileJson, AlertTriangle } from "lucide-react";
 import { importExport } from "@/lib/api";
 
@@ -6,18 +6,54 @@ interface ImportDialogProps {
   open: boolean;
   onClose: () => void;
   onImported: () => void;
+  autoPickFolder?: boolean;
 }
 
-export function ImportDialog({ open, onClose, onImported }: ImportDialogProps) {
+export function ImportDialog({
+  open,
+  onClose,
+  onImported,
+  autoPickFolder = false,
+}: ImportDialogProps) {
+  type SelectedImport = {
+    kind: "json-file";
+    file: File;
+  } | GeneratedFolderExport;
+
+  type GeneratedFolderExport = {
+    kind: "generated-folder-export";
+    filename: string;
+    content: string;
+    bytes: number;
+    sourceFolder: string;
+    totalFiles: number;
+    totalDirs: number;
+  };
+
+  interface FsFileNode {
+    name: string;
+    path: string;
+    is_dir: boolean;
+    size: number;
+    children?: FsFileNode[];
+  }
+
+  interface DirectoryPickerWindow extends Window {
+    showDirectoryPicker?: () => Promise<FileSystemDirectoryHandle>;
+  }
+
   const [file, setFile] = useState<File | null>(null);
+  const [generated, setGenerated] = useState<GeneratedFolderExport | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [status, setStatus] = useState<{
     type: "idle" | "loading" | "error" | "confirm";
     message: string;
   }>({ type: "idle", message: "" });
+  const autoPickedRef = useRef(false);
 
   const reset = () => {
     setFile(null);
+    setGenerated(null);
     setStatus({ type: "idle", message: "" });
   };
 
@@ -42,18 +78,213 @@ export function ImportDialog({ open, onClose, onImported }: ImportDialogProps) {
     const selected = e.target.files?.[0];
     if (selected) {
       setFile(selected);
+      setGenerated(null);
       setStatus({ type: "idle", message: "" });
     }
   };
 
+  const buildFolderExportFromPicker = useCallback(async (
+    dir: FileSystemDirectoryHandle
+  ): Promise<GeneratedFolderExport> => {
+    const walk = async (
+      directory: FileSystemDirectoryHandle,
+      prefix: string
+    ): Promise<FsFileNode[]> => {
+      const children: FsFileNode[] = [];
+      for await (const entry of directory.values()) {
+        const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+        if (entry.kind === "directory") {
+          const nested = await walk(entry, path);
+          children.push({
+            name: entry.name,
+            path,
+            is_dir: true,
+            size: 0,
+            children: nested,
+          });
+          continue;
+        }
+        if (entry.kind === "file") {
+          const file = await entry.getFile();
+          children.push({
+            name: entry.name,
+            path,
+            is_dir: false,
+            size: file.size,
+          });
+        }
+      }
+      children.sort((a, b) => {
+        if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+      return children;
+    };
+
+    const tree = await walk(dir, dir.name);
+    let totalFiles = 0;
+    let totalDirs = 0;
+    const count = (nodes: FsFileNode[]) => {
+      for (const node of nodes) {
+        if (node.is_dir) {
+          totalDirs += 1;
+          if (node.children?.length) count(node.children);
+        } else {
+          totalFiles += 1;
+        }
+      }
+    };
+    count(tree);
+
+    const payload = {
+      company: "",
+      folder: dir.name,
+      description: "Generated from a local folder selection",
+      children: tree,
+    };
+    const content = JSON.stringify(payload, null, 2);
+    return {
+      kind: "generated-folder-export",
+      filename: `${dir.name}.json`,
+      content,
+      bytes: new Blob([content], { type: "application/json" }).size,
+      sourceFolder: dir.name,
+      totalFiles,
+      totalDirs,
+    };
+  }, []);
+
+  const handleFolderPick = useCallback(async () => {
+    const maybeWin = window as DirectoryPickerWindow;
+    if (!maybeWin.showDirectoryPicker) {
+      setStatus({
+        type: "error",
+        message:
+          "Folder picker isn't supported in this browser. Use the folder upload fallback below.",
+      });
+      return;
+    }
+    setStatus({ type: "loading", message: "Reading folder..." });
+    try {
+      const dir = await maybeWin.showDirectoryPicker();
+      const generatedExport = await buildFolderExportFromPicker(dir);
+      setFile(null);
+      setGenerated(generatedExport);
+      setStatus({ type: "idle", message: "" });
+    } catch {
+      setStatus({
+        type: "error",
+        message: "Unable to read selected folder (cancelled or permission denied).",
+      });
+    }
+  }, [buildFolderExportFromPicker]);
+
+  const handleFolderInputSelect = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const selectedFiles = Array.from(e.target.files ?? []);
+    if (selectedFiles.length === 0) return;
+    setStatus({ type: "loading", message: "Reading folder..." });
+    try {
+      const rootName = selectedFiles[0].webkitRelativePath.split("/")[0] || "folder";
+      const nodeMap = new Map<string, FsFileNode>();
+      const ensureDir = (dirPath: string): FsFileNode => {
+        const existing = nodeMap.get(dirPath);
+        if (existing) return existing;
+        const parts = dirPath.split("/");
+        const dirNode: FsFileNode = {
+          name: parts[parts.length - 1] || rootName,
+          path: dirPath,
+          is_dir: true,
+          size: 0,
+          children: [],
+        };
+        nodeMap.set(dirPath, dirNode);
+        if (parts.length > 1) {
+          const parentPath = parts.slice(0, -1).join("/");
+          const parent = ensureDir(parentPath);
+          if (!parent.children?.some((c) => c.path === dirNode.path)) {
+            parent.children?.push(dirNode);
+          }
+        }
+        return dirNode;
+      };
+
+      ensureDir(rootName);
+
+      for (const entry of selectedFiles) {
+        const rel = entry.webkitRelativePath || entry.name;
+        const parts = rel.split("/");
+        const fileName = parts.pop() || entry.name;
+        const parentPath = parts.join("/");
+        const parentDir = ensureDir(parentPath || rootName);
+        parentDir.children?.push({
+          name: fileName,
+          path: rel,
+          is_dir: false,
+          size: entry.size,
+        });
+      }
+
+      const sortTree = (nodes: FsFileNode[]) => {
+        nodes.sort((a, b) => {
+          if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+          return a.name.localeCompare(b.name);
+        });
+        for (const node of nodes) {
+          if (node.children?.length) sortTree(node.children);
+        }
+      };
+      const root = nodeMap.get(rootName);
+      const tree = root?.children ?? [];
+      sortTree(tree);
+
+      const payload = {
+        company: "",
+        folder: rootName,
+        description: "Generated from a local folder selection",
+        children: tree,
+      };
+      const content = JSON.stringify(payload, null, 2);
+      const generatedExport: GeneratedFolderExport = {
+        kind: "generated-folder-export",
+        filename: `${rootName}.json`,
+        content,
+        bytes: new Blob([content], { type: "application/json" }).size,
+        sourceFolder: rootName,
+        totalFiles: selectedFiles.length,
+        totalDirs: Math.max(0, nodeMap.size - 1),
+      };
+
+      setFile(null);
+      setGenerated(generatedExport);
+      setStatus({ type: "idle", message: "" });
+    } catch {
+      setStatus({
+        type: "error",
+        message: "Unable to process selected folder files.",
+      });
+    } finally {
+      e.target.value = "";
+    }
+  };
+
   const doImport = async (overwrite: boolean) => {
-    if (!file) return;
+    const selected: SelectedImport | null = file
+      ? { kind: "json-file", file }
+      : generated;
+    if (!selected) return;
     setStatus({ type: "loading", message: "Importing..." });
 
     try {
-      const content = await file.text();
+      const filename =
+        selected.kind === "json-file" ? selected.file.name : selected.filename;
+      const content =
+        selected.kind === "json-file"
+          ? await selected.file.text()
+          : selected.content;
       const { status: httpStatus, data } = await importExport(
-        file.name,
+        filename,
         content,
         overwrite
       );
@@ -77,6 +308,29 @@ export function ImportDialog({ open, onClose, onImported }: ImportDialogProps) {
       setStatus({ type: "error", message: "Network error during import" });
     }
   };
+
+  const downloadGenerated = () => {
+    if (!generated || generated.kind !== "generated-folder-export") return;
+    const blob = new Blob([generated.content], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = generated.filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  useEffect(() => {
+    if (!open) {
+      autoPickedRef.current = false;
+      return;
+    }
+    if (!autoPickFolder || autoPickedRef.current || file || generated) return;
+    autoPickedRef.current = true;
+    void handleFolderPick();
+  }, [autoPickFolder, file, generated, handleFolderPick, open]);
 
   if (!open) return null;
 
@@ -128,6 +382,37 @@ export function ImportDialog({ open, onClose, onImported }: ImportDialogProps) {
                 <X size={16} />
               </button>
             </div>
+          ) : generated ? (
+            <div className="w-full rounded-lg border border-border bg-muted/30 p-3 text-left">
+              <div className="mb-2 flex items-center gap-2">
+                <FileJson size={18} className="text-primary" />
+                <p className="font-medium text-foreground">{generated.filename}</p>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Source folder: <span className="font-medium">{generated.sourceFolder}</span>
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {generated.totalFiles} files • {generated.totalDirs} folders •{" "}
+                {(generated.bytes / 1024).toFixed(1)} KB JSON
+              </p>
+              <div className="mt-2 flex gap-2">
+                <button
+                  onClick={downloadGenerated}
+                  className="rounded-md border border-border px-2 py-1 text-xs text-foreground hover:bg-accent"
+                >
+                  Download JSON
+                </button>
+                <button
+                  onClick={() => {
+                    setGenerated(null);
+                    setStatus({ type: "idle", message: "" });
+                  }}
+                  className="rounded-md border border-border px-2 py-1 text-xs text-foreground hover:bg-accent"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
           ) : (
             <>
               <Upload
@@ -140,13 +425,32 @@ export function ImportDialog({ open, onClose, onImported }: ImportDialogProps) {
               <p className="mb-3 text-xs text-muted-foreground">
                 or click to browse
               </p>
-              <label className="cursor-pointer rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90">
+              <label className="mb-2 cursor-pointer rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90">
                 Choose file
                 <input
                   type="file"
                   accept=".json"
                   className="hidden"
                   onChange={handleFileSelect}
+                />
+              </label>
+              <button
+                onClick={handleFolderPick}
+                className="mb-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+              >
+                Choose folder (recursive)
+              </button>
+              <label className="cursor-pointer text-xs text-muted-foreground underline decoration-dotted underline-offset-2">
+                Fallback folder upload
+                <input
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={handleFolderInputSelect}
+                  {...({ webkitdirectory: "true", directory: "" } as Record<
+                    string,
+                    string
+                  >)}
                 />
               </label>
             </>
@@ -195,7 +499,7 @@ export function ImportDialog({ open, onClose, onImported }: ImportDialogProps) {
           </button>
           <button
             onClick={() => doImport(false)}
-            disabled={!file || status.type === "loading"}
+            disabled={(!file && !generated) || status.type === "loading"}
             className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {status.type === "loading" ? "Importing..." : "Import"}
