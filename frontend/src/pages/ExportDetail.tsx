@@ -73,6 +73,7 @@ function extractZipEntryNames(file: File): Promise<string[]> {
 
 type LocalDeepScanResult = {
   signals: number;
+  files_selected: number;
   text_scanned: number;
   text_skipped_ext: number;
   text_skipped_size: number;
@@ -188,6 +189,7 @@ export function ExportDetail() {
       const patterns = await fetchPiiPatterns();
       const result: LocalDeepScanResult = {
         signals: 0,
+        files_selected: files.length,
         text_scanned: 0,
         text_skipped_ext: 0,
         text_skipped_size: 0,
@@ -227,7 +229,15 @@ export function ExportDetail() {
       }
 
       setDeepScanResult(result);
-      toast.success(`Deep scan complete: ${result.signals} signal(s), ${result.zip_entries_reviewed} zip entries reviewed.`);
+      if (result.signals === 0) {
+        toast.success(
+          `Deep scan complete: no keyword hits across ${result.files_selected} selected file(s).`
+        );
+      } else {
+        toast.success(
+          `Deep scan complete: ${result.signals} signal(s), ${result.zip_entries_reviewed} zip entries reviewed.`
+        );
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Deep scan failed");
     } finally {
@@ -387,9 +397,16 @@ export function ExportDetail() {
         <div className="mb-4 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
           <p className="font-medium text-foreground">Ad-hoc local deep scan (this device)</p>
           <p>Signals: {deepScanResult.signals}</p>
+          <p>Selected files: {deepScanResult.files_selected}</p>
           <p>Text scanned: {deepScanResult.text_scanned} • skipped (ext/size): {deepScanResult.text_skipped_ext}/{deepScanResult.text_skipped_size}</p>
           <p>ZIP scanned/skipped(size): {deepScanResult.zip_scanned}/{deepScanResult.zip_skipped_size}</p>
           <p>ZIP entries reviewed: {deepScanResult.zip_entries_reviewed}</p>
+          {deepScanResult.signals === 0 && (
+            <p className="mt-1">
+              No keyword matches were found. Deep scan checks supported text files plus ZIP entry names only; edit
+              pattern keywords in Settings if you need broader detection.
+            </p>
+          )}
         </div>
       )}
 

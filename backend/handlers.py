@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
 import time
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler
@@ -1023,9 +1024,18 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
 
     def _handle_updates_check(self):
         if not (BASE_DIR / ".git").exists():
-            return self._error_response(
-                HTTPStatus.BAD_REQUEST,
-                "Updates require a git checkout (.git not found).",
+            return self._json_response(
+                {
+                    "supported": False,
+                    "can_update": False,
+                    "error": "Updates require a git checkout (.git not found).",
+                    "details": "This install appears to be a packaged copy without git metadata.",
+                    "branch": "",
+                    "current_commit": "",
+                    "latest_commit": "",
+                    "ahead_by": 0,
+                    "behind_by": 0,
+                }
             )
 
         branch_res = self._git("rev-parse", "--abbrev-ref", "HEAD")
@@ -1077,6 +1087,7 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
 
         self._json_response(
             {
+                "supported": True,
                 "branch": branch,
                 "current_commit": head_res.stdout.strip(),
                 "latest_commit": remote_res.stdout.strip(),
