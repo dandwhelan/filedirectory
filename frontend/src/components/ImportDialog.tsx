@@ -9,12 +9,7 @@ interface ImportDialogProps {
   autoPickFolder?: boolean;
 }
 
-export function ImportDialog({
-  open,
-  onClose,
-  onImported,
-  autoPickFolder = false,
-}: ImportDialogProps) {
+export function ImportDialog({ open, onClose, onImported }: ImportDialogProps) {
   type SelectedImport = {
     kind: "json-file";
     file: File;
@@ -80,6 +75,192 @@ export function ImportDialog({
       setFile(selected);
       setGenerated(null);
       setStatus({ type: "idle", message: "" });
+    }
+  };
+
+  const buildFolderExportFromPicker = async (
+    dir: FileSystemDirectoryHandle
+  ): Promise<GeneratedFolderExport> => {
+    const walk = async (
+      directory: FileSystemDirectoryHandle,
+      prefix: string
+    ): Promise<FsFileNode[]> => {
+      const children: FsFileNode[] = [];
+      for await (const entry of directory.values()) {
+        const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+        if (entry.kind === "directory") {
+          const nested = await walk(entry, path);
+          children.push({
+            name: entry.name,
+            path,
+            is_dir: true,
+            size: 0,
+            children: nested,
+          });
+          continue;
+        }
+        if (entry.kind === "file") {
+          const file = await entry.getFile();
+          children.push({
+            name: entry.name,
+            path,
+            is_dir: false,
+            size: file.size,
+          });
+        }
+      }
+      children.sort((a, b) => {
+        if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+      return children;
+    };
+
+    const tree = await walk(dir, dir.name);
+    let totalFiles = 0;
+    let totalDirs = 0;
+    const count = (nodes: FsFileNode[]) => {
+      for (const node of nodes) {
+        if (node.is_dir) {
+          totalDirs += 1;
+          if (node.children?.length) count(node.children);
+        } else {
+          totalFiles += 1;
+        }
+      }
+    };
+    count(tree);
+
+    const payload = {
+      company: "",
+      folder: dir.name,
+      description: "Generated from a local folder selection",
+      children: tree,
+    };
+    const content = JSON.stringify(payload, null, 2);
+    return {
+      kind: "generated-folder-export",
+      filename: `${dir.name}.json`,
+      content,
+      bytes: new Blob([content], { type: "application/json" }).size,
+      sourceFolder: dir.name,
+      totalFiles,
+      totalDirs,
+    };
+  };
+
+  const handleFolderPick = async () => {
+    const maybeWin = window as DirectoryPickerWindow;
+    if (!maybeWin.showDirectoryPicker) {
+      setStatus({
+        type: "error",
+        message:
+          "Folder picker isn't supported in this browser. Use the folder upload fallback below.",
+      });
+      return;
+    }
+    setStatus({ type: "loading", message: "Reading folder..." });
+    try {
+      const dir = await maybeWin.showDirectoryPicker();
+      const generatedExport = await buildFolderExportFromPicker(dir);
+      setFile(null);
+      setGenerated(generatedExport);
+      setStatus({ type: "idle", message: "" });
+    } catch {
+      setStatus({
+        type: "error",
+        message: "Unable to read selected folder (cancelled or permission denied).",
+      });
+    }
+  };
+
+  const handleFolderInputSelect = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const selectedFiles = Array.from(e.target.files ?? []);
+    if (selectedFiles.length === 0) return;
+    setStatus({ type: "loading", message: "Reading folder..." });
+    try {
+      const rootName = selectedFiles[0].webkitRelativePath.split("/")[0] || "folder";
+      const nodeMap = new Map<string, FsFileNode>();
+      const ensureDir = (dirPath: string): FsFileNode => {
+        const existing = nodeMap.get(dirPath);
+        if (existing) return existing;
+        const parts = dirPath.split("/");
+        const dirNode: FsFileNode = {
+          name: parts[parts.length - 1] || rootName,
+          path: dirPath,
+          is_dir: true,
+          size: 0,
+          children: [],
+        };
+        nodeMap.set(dirPath, dirNode);
+        if (parts.length > 1) {
+          const parentPath = parts.slice(0, -1).join("/");
+          const parent = ensureDir(parentPath);
+          if (!parent.children?.some((c) => c.path === dirNode.path)) {
+            parent.children?.push(dirNode);
+          }
+        }
+        return dirNode;
+      };
+
+      ensureDir(rootName);
+
+      for (const entry of selectedFiles) {
+        const rel = entry.webkitRelativePath || entry.name;
+        const parts = rel.split("/");
+        const fileName = parts.pop() || entry.name;
+        const parentPath = parts.join("/");
+        const parentDir = ensureDir(parentPath || rootName);
+        parentDir.children?.push({
+          name: fileName,
+          path: rel,
+          is_dir: false,
+          size: entry.size,
+        });
+      }
+
+      const sortTree = (nodes: FsFileNode[]) => {
+        nodes.sort((a, b) => {
+          if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+          return a.name.localeCompare(b.name);
+        });
+        for (const node of nodes) {
+          if (node.children?.length) sortTree(node.children);
+        }
+      };
+      const root = nodeMap.get(rootName);
+      const tree = root?.children ?? [];
+      sortTree(tree);
+
+      const payload = {
+        company: "",
+        folder: rootName,
+        description: "Generated from a local folder selection",
+        children: tree,
+      };
+      const content = JSON.stringify(payload, null, 2);
+      const generatedExport: GeneratedFolderExport = {
+        kind: "generated-folder-export",
+        filename: `${rootName}.json`,
+        content,
+        bytes: new Blob([content], { type: "application/json" }).size,
+        sourceFolder: rootName,
+        totalFiles: selectedFiles.length,
+        totalDirs: Math.max(0, nodeMap.size - 1),
+      };
+
+      setFile(null);
+      setGenerated(generatedExport);
+      setStatus({ type: "idle", message: "" });
+    } catch {
+      setStatus({
+        type: "error",
+        message: "Unable to process selected folder files.",
+      });
+    } finally {
+      e.target.value = "";
     }
   };
 
@@ -321,16 +502,6 @@ export function ImportDialog({
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
-
-  useEffect(() => {
-    if (!open) {
-      autoPickedRef.current = false;
-      return;
-    }
-    if (!autoPickFolder || autoPickedRef.current || file || generated) return;
-    autoPickedRef.current = true;
-    void handleFolderPick();
-  }, [autoPickFolder, file, generated, handleFolderPick, open]);
 
   if (!open) return null;
 
