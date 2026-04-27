@@ -24,18 +24,6 @@ type GeneratedFolderExport = {
   totalDirs: number;
   deepSignals?: number;
   zipEntries?: number;
-  debug?: DeepScanDebug;
-};
-
-type DeepScanDebug = {
-  enabled: boolean;
-  text_files_scanned: number;
-  text_files_skipped_size: number;
-  text_files_skipped_extension: number;
-  zip_files_scanned: number;
-  zip_files_skipped_size: number;
-  zip_entries_reviewed: number;
-  deep_signals: number;
 };
 
 interface FsFileNode {
@@ -258,16 +246,6 @@ export function ImportDialog({
   ): Promise<GeneratedFolderExport> => {
     let zipEntries = 0;
     let deepSignals = 0;
-    const debug: DeepScanDebug = {
-      enabled: withDeepScan,
-      text_files_scanned: 0,
-      text_files_skipped_size: 0,
-      text_files_skipped_extension: 0,
-      zip_files_scanned: 0,
-      zip_files_skipped_size: 0,
-      zip_entries_reviewed: 0,
-      deep_signals: 0,
-    };
     const patterns = withDeepScan ? await getPatterns() : [];
 
     const walk = async (
@@ -295,9 +273,6 @@ export function ImportDialog({
             children.push(expanded.node);
             zipEntries += expanded.zipEntries;
             deepSignals += expanded.deepSignals;
-            if (picked.size > MAX_ZIP_BYTES) debug.zip_files_skipped_size += 1;
-            else debug.zip_files_scanned += 1;
-            debug.zip_entries_reviewed += expanded.zipEntries;
             continue;
           }
           children.push({
@@ -307,10 +282,6 @@ export function ImportDialog({
             size: picked.size,
           });
           if (withDeepScan) {
-            const ext = picked.name.split(".").pop()?.toLowerCase() || "";
-            if (!TEXT_SCAN_EXTENSIONS.has(ext)) debug.text_files_skipped_extension += 1;
-            else if (picked.size > MAX_TEXT_SCAN_BYTES) debug.text_files_skipped_size += 1;
-            else debug.text_files_scanned += 1;
             deepSignals += await scanTextAgainstPatterns(picked, patterns);
           }
         }
@@ -343,7 +314,6 @@ export function ImportDialog({
       description: withDeepScan
         ? "Generated from local folder selection with deep local PII scan"
         : "Generated from a local folder selection",
-      _meta: withDeepScan ? { deep_scan_debug: { ...debug, deep_signals: deepSignals } } : undefined,
       children: tree,
     };
     const content = JSON.stringify(payload, null, 2);
@@ -357,7 +327,6 @@ export function ImportDialog({
       totalDirs,
       deepSignals,
       zipEntries,
-      debug: { ...debug, deep_signals: deepSignals },
     };
   }, [expandZipToVirtualTree, getPatterns, scanTextAgainstPatterns]);
 
@@ -397,16 +366,6 @@ export function ImportDialog({
       const nodeMap = new Map<string, FsFileNode>();
       let deepSignals = 0;
       let zipEntries = 0;
-      const debug: DeepScanDebug = {
-        enabled: deepScan,
-        text_files_scanned: 0,
-        text_files_skipped_size: 0,
-        text_files_skipped_extension: 0,
-        zip_files_scanned: 0,
-        zip_files_skipped_size: 0,
-        zip_entries_reviewed: 0,
-        deep_signals: 0,
-      };
       const patterns = deepScan ? await getPatterns() : [];
 
       const ensureDir = (dirPath: string): FsFileNode => {
@@ -445,9 +404,6 @@ export function ImportDialog({
           parentDir.children?.push(expanded.node);
           zipEntries += expanded.zipEntries;
           deepSignals += expanded.deepSignals;
-          if (entry.size > MAX_ZIP_BYTES) debug.zip_files_skipped_size += 1;
-          else debug.zip_files_scanned += 1;
-          debug.zip_entries_reviewed += expanded.zipEntries;
           continue;
         }
 
@@ -459,10 +415,6 @@ export function ImportDialog({
         });
 
         if (deepScan) {
-          const ext = fileName.split(".").pop()?.toLowerCase() || "";
-          if (!TEXT_SCAN_EXTENSIONS.has(ext)) debug.text_files_skipped_extension += 1;
-          else if (entry.size > MAX_TEXT_SCAN_BYTES) debug.text_files_skipped_size += 1;
-          else debug.text_files_scanned += 1;
           deepSignals += await scanTextAgainstPatterns(entry, patterns);
         }
       }
@@ -486,7 +438,6 @@ export function ImportDialog({
         description: deepScan
           ? "Generated from local folder selection with deep local PII scan"
           : "Generated from a local folder selection",
-        _meta: deepScan ? { deep_scan_debug: { ...debug, deep_signals: deepSignals } } : undefined,
         children: tree,
       };
       const content = JSON.stringify(payload, null, 2);
@@ -500,7 +451,6 @@ export function ImportDialog({
         totalDirs: Math.max(0, nodeMap.size - 1),
         deepSignals,
         zipEntries,
-        debug: { ...debug, deep_signals: deepSignals },
       };
 
       setFile(null);
@@ -654,18 +604,9 @@ export function ImportDialog({
                 {(generated.bytes / 1024).toFixed(1)} KB JSON
               </p>
               {deepScan && (
-                <div className="mt-1 space-y-1 text-xs text-muted-foreground">
-                  <p>
-                    Deep scan signals: {generated.deepSignals ?? 0} • ZIP entries reviewed: {generated.zipEntries ?? 0}
-                  </p>
-                  {generated.debug && (
-                    <p>
-                      Debug — text scanned: {generated.debug.text_files_scanned}, text skipped(ext/size):{" "}
-                      {generated.debug.text_files_skipped_extension}/{generated.debug.text_files_skipped_size}, zip scanned/skipped:{" "}
-                      {generated.debug.zip_files_scanned}/{generated.debug.zip_files_skipped_size}
-                    </p>
-                  )}
-                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Deep scan signals: {generated.deepSignals ?? 0} • ZIP entries reviewed: {generated.zipEntries ?? 0}
+                </p>
               )}
               <div className="mt-2 flex gap-2">
                 <button
