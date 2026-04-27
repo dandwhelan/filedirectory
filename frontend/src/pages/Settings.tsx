@@ -181,7 +181,9 @@ export function Settings() {
     try {
       const data = await checkForUpdates();
       setUpdateInfo(data);
-      if (data.can_update) {
+      if (data.supported === false) {
+        toast.success("Updates are unavailable for this install (no .git checkout).");
+      } else if (data.can_update) {
         toast.success(`Update available: ${data.behind_by} commit(s) behind origin/${data.branch}.`);
       } else {
         toast.success("Already up to date.");
@@ -262,7 +264,7 @@ export function Settings() {
           </button>
           <button
             onClick={onApplyUpdate}
-            disabled={applyingUpdate || !updateInfo?.can_update}
+            disabled={applyingUpdate || !updateInfo?.can_update || updateInfo?.supported === false}
             className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
           >
             <Check size={14} />
@@ -271,12 +273,24 @@ export function Settings() {
         </div>
         {updateInfo && (
           <div className="mt-3 rounded-lg border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
-            <p>Branch: <span className="font-medium text-foreground">{updateInfo.branch}</span></p>
-            <p>Current: <code>{updateInfo.current_commit.slice(0, 12)}</code></p>
-            <p>Latest: <code>{updateInfo.latest_commit.slice(0, 12)}</code></p>
-            <p>Ahead/Behind: {updateInfo.ahead_by}/{updateInfo.behind_by}</p>
+            {updateInfo.supported === false ? (
+              <>
+                <p className="font-medium text-foreground">Updates are disabled in this install.</p>
+                <p>{updateInfo.error}</p>
+                {updateInfo.details && <p className="mt-1">{updateInfo.details}</p>}
+              </>
+            ) : (
+              <>
+                <p>Branch: <span className="font-medium text-foreground">{updateInfo.branch}</span></p>
+                <p>Current: <code>{updateInfo.current_commit.slice(0, 12)}</code></p>
+                <p>Latest: <code>{updateInfo.latest_commit.slice(0, 12)}</code></p>
+                <p>Ahead/Behind: {updateInfo.ahead_by}/{updateInfo.behind_by}</p>
+              </>
+            )}
             <p className="mt-1">
-              {updateInfo.can_update
+              {updateInfo.supported === false
+                ? "Tip: use git clone if you want in-app update checks."
+                : updateInfo.can_update
                 ? "Update available. Click \"Update now\" then restart app.py."
                 : "You are up to date."}
             </p>

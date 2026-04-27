@@ -345,6 +345,7 @@ export async function rescanOne(
 
 // --- Self update ---
 export interface UpdateCheck {
+  supported?: boolean;
   branch: string;
   current_commit: string;
   latest_commit: string;
