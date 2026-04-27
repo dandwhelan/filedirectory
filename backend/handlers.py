@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+import time
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler
 from pathlib import Path
@@ -28,6 +30,29 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
         # so deployments behind a reverse proxy / systemd can capture access
         # logs via journalctl or stdout redirection.
         super().log_message(format, *args)
+
+    def _commit_with_retry(
+        self,
+        conn,
+        action,
+        params=(),
+        *,
+        max_attempts: int = 3,
+        base_sleep: float = 0.1,
+    ) -> None:
+        """Run a write statement + commit with small retry on SQLITE_BUSY."""
+        attempt = 0
+        while True:
+            try:
+                conn.execute(action, params)
+                conn.commit()
+                return
+            except sqlite3.OperationalError as exc:
+                msg = str(exc).lower()
+                if "database is locked" not in msg or attempt >= max_attempts - 1:
+                    raise
+                attempt += 1
+                time.sleep(base_sleep * attempt)
 
     # ------------------------------------------------------------------
     # Routing
@@ -623,10 +648,21 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
 
         filename = row["filename"]
         now = _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime())
-        conn.execute(
-            "UPDATE exports SET deleted_at = ? WHERE id = ?", (now, export_id)
-        )
-        conn.commit()
+        try:
+            self._commit_with_retry(
+                conn,
+                "UPDATE exports SET deleted_at = ? WHERE id = ?",
+                (now, export_id),
+            )
+        except sqlite3.OperationalError:
+            conn.close()
+            return self._json_response(
+                {
+                    "error": "Database is busy. Please retry the delete in a moment.",
+                    "code": "db_locked",
+                },
+                status=HTTPStatus.LOCKED,
+            )
         conn.close()
 
         data_file = DATA_DIR / filename
@@ -681,8 +717,21 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
                 f"Cannot restore: another export already uses '{filename}'",
             )
 
-        conn.execute("UPDATE exports SET deleted_at = '' WHERE id = ?", (export_id,))
-        conn.commit()
+        try:
+            self._commit_with_retry(
+                conn,
+                "UPDATE exports SET deleted_at = '' WHERE id = ?",
+                (export_id,),
+            )
+        except sqlite3.OperationalError:
+            conn.close()
+            return self._json_response(
+                {
+                    "error": "Database is busy. Please retry restore in a moment.",
+                    "code": "db_locked",
+                },
+                status=HTTPStatus.LOCKED,
+            )
         conn.close()
 
         data_file = DATA_DIR / filename
@@ -711,8 +760,21 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
             )
 
         filename = row["filename"]
-        conn.execute("DELETE FROM exports WHERE id = ?", (export_id,))
-        conn.commit()
+        try:
+            self._commit_with_retry(
+                conn,
+                "DELETE FROM exports WHERE id = ?",
+                (export_id,),
+            )
+        except sqlite3.OperationalError:
+            conn.close()
+            return self._json_response(
+                {
+                    "error": "Database is busy. Please retry purge in a moment.",
+                    "code": "db_locked",
+                },
+                status=HTTPStatus.LOCKED,
+            )
         conn.close()
 
         for suffix in (".deleted", ""):
@@ -1054,11 +1116,16 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
 
     def _json_response(self, payload: dict, status: HTTPStatus = HTTPStatus.OK):
         response = json.dumps(payload).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(response)))
-        self.end_headers()
-        self.wfile.write(response)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response)))
+            self.end_headers()
+            self.wfile.write(response)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+            # Client disconnected before/during write. This is common when a tab
+            # reloads rapidly and should not crash noisy stack traces per request.
+            return
 
     def _error_response(self, status: HTTPStatus, message: str):
         self._json_response({"error": message}, status=status)

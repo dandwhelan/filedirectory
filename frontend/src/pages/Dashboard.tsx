@@ -175,7 +175,7 @@ export function Dashboard() {
             className="inline-flex items-center gap-2 rounded-lg border border-input bg-background px-3 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-accent"
           >
             <FolderTree size={14} />
-            All Local Folder
+            Import Local Folder
           </button>
         </div>
       </div>
