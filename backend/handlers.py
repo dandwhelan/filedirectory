@@ -1116,11 +1116,16 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
 
     def _json_response(self, payload: dict, status: HTTPStatus = HTTPStatus.OK):
         response = json.dumps(payload).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(response)))
-        self.end_headers()
-        self.wfile.write(response)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response)))
+            self.end_headers()
+            self.wfile.write(response)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+            # Client disconnected before/during write. This is common when a tab
+            # reloads rapidly and should not crash noisy stack traces per request.
+            return
 
     def _error_response(self, status: HTTPStatus, message: str):
         self._json_response({"error": message}, status=status)
