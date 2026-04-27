@@ -74,12 +74,15 @@ function extractZipEntryNames(file: File): Promise<string[]> {
 type LocalDeepScanResult = {
   signals: number;
   files_selected: number;
+  enabled_patterns: number;
   text_scanned: number;
   text_skipped_ext: number;
   text_skipped_size: number;
   zip_scanned: number;
   zip_skipped_size: number;
   zip_entries_reviewed: number;
+  matched_targets: string[];
+  sample_skipped_ext: string[];
 };
 
 export function ExportDetail() {
@@ -168,7 +171,7 @@ export function ExportDetail() {
 
   const patternMatchCount = useCallback((text: string, patterns: PiiPattern[]) => {
     const lower = text.toLowerCase();
-    let hits = 0;
+    const matchedLabels: string[] = [];
     for (const pattern of patterns) {
       if (!pattern.enabled) continue;
       const matched = pattern.keywords.some((kw) => {
@@ -176,9 +179,9 @@ export function ExportDetail() {
         if (!escaped) return false;
         return new RegExp(`\\b${escaped}\\b`, "i").test(lower);
       });
-      if (matched) hits += 1;
+      if (matched) matchedLabels.push(pattern.label);
     }
-    return hits;
+    return matchedLabels;
   }, []);
 
   const handleDeepScanPick = useCallback(async (e: ChangeEvent<HTMLInputElement>) => {
@@ -190,12 +193,15 @@ export function ExportDetail() {
       const result: LocalDeepScanResult = {
         signals: 0,
         files_selected: files.length,
+        enabled_patterns: patterns.filter((p) => p.enabled).length,
         text_scanned: 0,
         text_skipped_ext: 0,
         text_skipped_size: 0,
         zip_scanned: 0,
         zip_skipped_size: 0,
         zip_entries_reviewed: 0,
+        matched_targets: [],
+        sample_skipped_ext: [],
       };
 
       for (const file of files) {
@@ -209,7 +215,11 @@ export function ExportDetail() {
           const names = await extractZipEntryNames(file);
           result.zip_entries_reviewed += names.length;
           for (const entryName of names.slice(0, DEEP_SCAN_MAX_ZIP_ENTRIES)) {
-            result.signals += patternMatchCount(entryName, patterns);
+            const matches = patternMatchCount(entryName, patterns);
+            result.signals += matches.length;
+            if (matches.length > 0 && result.matched_targets.length < 10) {
+              result.matched_targets.push(`${file.name} :: ${entryName}`);
+            }
           }
           continue;
         }
@@ -217,6 +227,9 @@ export function ExportDetail() {
         const ext = lower.split(".").pop() || "";
         if (!DEEP_SCAN_TEXT_EXTENSIONS.has(ext)) {
           result.text_skipped_ext += 1;
+          if (result.sample_skipped_ext.length < 10 && !result.sample_skipped_ext.includes(ext || "(none)")) {
+            result.sample_skipped_ext.push(ext || "(none)");
+          }
           continue;
         }
         if (file.size > DEEP_SCAN_MAX_TEXT_BYTES) {
@@ -225,7 +238,11 @@ export function ExportDetail() {
         }
         result.text_scanned += 1;
         const text = await file.text();
-        result.signals += patternMatchCount(text, patterns);
+        const matches = patternMatchCount(text, patterns);
+        result.signals += matches.length;
+        if (matches.length > 0 && result.matched_targets.length < 10) {
+          result.matched_targets.push(file.name);
+        }
       }
 
       setDeepScanResult(result);
@@ -396,11 +413,18 @@ export function ExportDetail() {
       {deepScanResult && (
         <div className="mb-4 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
           <p className="font-medium text-foreground">Ad-hoc local deep scan (this device)</p>
+          <p>Enabled patterns: {deepScanResult.enabled_patterns}</p>
           <p>Signals: {deepScanResult.signals}</p>
           <p>Selected files: {deepScanResult.files_selected}</p>
           <p>Text scanned: {deepScanResult.text_scanned} • skipped (ext/size): {deepScanResult.text_skipped_ext}/{deepScanResult.text_skipped_size}</p>
           <p>ZIP scanned/skipped(size): {deepScanResult.zip_scanned}/{deepScanResult.zip_skipped_size}</p>
           <p>ZIP entries reviewed: {deepScanResult.zip_entries_reviewed}</p>
+          {deepScanResult.sample_skipped_ext.length > 0 && (
+            <p>Sample skipped extensions: {deepScanResult.sample_skipped_ext.join(", ")}</p>
+          )}
+          {deepScanResult.matched_targets.length > 0 && (
+            <p>Sample matched files/entries: {deepScanResult.matched_targets.join(" • ")}</p>
+          )}
           {deepScanResult.signals === 0 && (
             <p className="mt-1">
               No keyword matches were found. Deep scan checks supported text files plus ZIP entry names only; edit
