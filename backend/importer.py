@@ -73,8 +73,15 @@ def store_export(
     signals, pii_score, pii_band = compute_pii(all_nodes, patterns)
 
     existing = conn.execute(
-        "SELECT id FROM exports WHERE filename = ?", (filename,)
+        "SELECT id, deleted_at FROM exports WHERE filename = ?", (filename,)
     ).fetchone()
+
+    # A soft-deleted row owns this filename. Without `overwrite`, surface a
+    # distinct conflict so the UI can prompt the user to restore or purge.
+    # With `overwrite` (typical for startup sync of a re-added file), we
+    # clear `deleted_at` and replace the contents.
+    if existing and existing["deleted_at"] and not overwrite:
+        return {"conflict": True, "name": filename, "in_trash": True}
 
     if existing and overwrite:
         export_id = existing["id"]
@@ -83,7 +90,7 @@ def store_export(
         conn.execute(
             """UPDATE exports SET company=?, folder=?, description=?, updated_at=?,
                    file_count=?, dir_count=?, total_size=?, pii_score=?, pii_band=?,
-                   raw_json=?, source_sha256=?, source_mtime=?
+                   raw_json=?, source_sha256=?, source_mtime=?, deleted_at=''
                WHERE id=?""",
             (
                 data.get("company", ""), data.get("folder", ""), data.get("description", ""),
@@ -110,6 +117,9 @@ def store_export(
         overwritten = False
 
     # Insert nodes (recursive; batching per subtree keeps the code simple).
+    # Track path -> node_id so we can backfill pii_signals.node_id below.
+    path_to_node_id: dict[str, int] = {}
+
     def _insert_nodes(children, parent_id=None, depth=0):
         for child in children:
             cur = conn.execute(
@@ -122,6 +132,9 @@ def store_export(
                 ),
             )
             node_id = cur.lastrowid
+            path = child.get("path", "")
+            if path:
+                path_to_node_id[path] = node_id
             if child.get("children"):
                 _insert_nodes(child["children"], node_id, depth + 1)
 
@@ -129,10 +142,12 @@ def store_export(
 
     if signals:
         conn.executemany(
-            """INSERT INTO pii_signals (export_id, pattern_label, category, severity, score, location)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO pii_signals
+               (export_id, node_id, pattern_label, category, severity, score, location)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             [
-                (export_id, s["pattern_label"], s["category"], s["severity"],
+                (export_id, path_to_node_id.get(s.get("node_path", "")),
+                 s["pattern_label"], s["category"], s["severity"],
                  s["score"], s["location"])
                 for s in signals
             ],
@@ -165,12 +180,18 @@ def rescan_export(conn: sqlite3.Connection, export_id: int) -> dict | None:
 
     conn.execute("DELETE FROM pii_signals WHERE export_id = ?", (export_id,))
     if signals:
+        # Resolve node_id by matching node path inside this export.
+        rows = conn.execute(
+            "SELECT id, path FROM nodes WHERE export_id = ?", (export_id,)
+        ).fetchall()
+        path_to_node_id = {r["path"]: r["id"] for r in rows if r["path"]}
         conn.executemany(
             """INSERT INTO pii_signals
-               (export_id, pattern_label, category, severity, score, location)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+               (export_id, node_id, pattern_label, category, severity, score, location)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             [
-                (export_id, s["pattern_label"], s["category"], s["severity"],
+                (export_id, path_to_node_id.get(s.get("node_path", "")),
+                 s["pattern_label"], s["category"], s["severity"],
                  s["score"], s["location"])
                 for s in signals
             ],
@@ -209,7 +230,7 @@ def sync_data_dir_to_db() -> dict:
 
     skipped = 0
     imported = 0
-    failed = 0
+    failures: list[dict] = []
 
     try:
         # Prefetch existing metadata in one query to avoid N+1 lookups at scale.
@@ -227,8 +248,8 @@ def sync_data_dir_to_db() -> dict:
             try:
                 stat = path.stat()
                 file_bytes = path.read_bytes()
-            except OSError:
-                failed += 1
+            except OSError as e:
+                failures.append({"file": path.name, "reason": f"read failed: {e}"})
                 continue
 
             sha = _sha256_bytes(file_bytes)
@@ -241,22 +262,36 @@ def sync_data_dir_to_db() -> dict:
 
             try:
                 data = json.loads(file_bytes.decode("utf-8"))
-            except (UnicodeDecodeError, ValueError):
-                failed += 1
+            except (UnicodeDecodeError, ValueError) as e:
+                failures.append({"file": path.name, "reason": f"invalid JSON: {e}"})
                 continue
-            if validate_export_schema(data) is not None:
-                failed += 1
+            schema_err = validate_export_schema(data)
+            if schema_err is not None:
+                failures.append({"file": path.name, "reason": f"schema: {schema_err}"})
                 continue
 
-            store_export(
-                conn, path.name, data, overwrite=True,
-                source_sha256=sha, source_mtime=mtime,
-            )
+            try:
+                store_export(
+                    conn, path.name, data, overwrite=True,
+                    source_sha256=sha, source_mtime=mtime,
+                )
+            except Exception as e:  # pragma: no cover - defensive
+                failures.append({"file": path.name, "reason": f"db error: {e}"})
+                continue
             imported += 1
     finally:
         conn.close()
 
-    return {"skipped": skipped, "imported": imported, "failed": failed}
+    if failures:
+        for f in failures:
+            print(f"[sync] failed: {f['file']} — {f['reason']}")
+
+    return {
+        "skipped": skipped,
+        "imported": imported,
+        "failed": len(failures),
+        "failures": failures,
+    }
 
 
 def hash_file_path(path: Path) -> str:

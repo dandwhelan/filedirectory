@@ -59,6 +59,7 @@ Frontend (`frontend/src/`):
 - `pages/ExportDetail.tsx` — tree + charts + PII table for one export.
 - `pages/Settings.tsx` — PII pattern editor (CRUD + rescan-all).
 - `pages/Diff.tsx` — side-by-side diff between two imports.
+- `pages/Trash.tsx` — list of soft-deleted exports with restore + purge.
 - `components/TreeView.tsx` — lazy-loaded tree (100 nodes/page).
 - `components/PiiTable.tsx` — sortable findings + JSON/CSV export.
 - `components/Charts.tsx` — Recharts donut + bar.
@@ -80,15 +81,20 @@ Frontend (`frontend/src/`):
 
 | Method | Path | Notes |
 | ------ | ---- | ----- |
-| `GET`  | `/api/overview` | Aggregate stats |
-| `GET`  | `/api/exports` | Paginated list |
-| `GET`  | `/api/export/<id>` | Detail (metadata + PII + charts data) |
+| `GET`  | `/api/overview` | Aggregate stats (excludes soft-deleted) |
+| `GET`  | `/api/exports` | Paginated list (excludes soft-deleted) |
+| `GET`  | `/api/export/<id>` | Detail (metadata + top 1000 PII signals + charts data) |
 | `GET`  | `/api/export/<id>/children` | Lazy tree (paginated) |
 | `GET`  | `/api/export/<id>/search?q=` | In-export name/path search |
 | `GET`  | `/api/search?q=` | Global search across all imports (names + paths) |
 | `GET`  | `/api/export/<id>/files-by-type?ext=` | Files of one extension |
+| `GET`  | `/api/export/<id>/explain` | Score breakdown (intensity / breadth / density) |
+| `GET`  | `/api/export/<id>/redact` | Download JSON with PII-flagged names masked |
 | `POST` | `/api/import` | Import JSON (`filename`, `content`, `overwrite`) |
-| `DELETE`| `/api/export/<id>` | Delete import (DB + data/ file) |
+| `DELETE`| `/api/export/<id>` | Soft delete: marks `deleted_at` + renames file `.deleted` |
+| `GET`  | `/api/trash` | List soft-deleted exports |
+| `POST` | `/api/export/<id>/restore` | Restore from trash |
+| `POST` | `/api/export/<id>/purge` | Hard delete (row + `.deleted` file) |
 | `GET`  | `/api/diff?a=<id>&b=<id>` | Tree diff between two imports |
 | `GET`  | `/api/pii-patterns` | List patterns |
 | `POST` | `/api/pii-patterns` | Create |
