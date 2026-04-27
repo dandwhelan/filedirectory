@@ -553,8 +553,9 @@ export function ImportDialog({
               checked={deepScan}
               onChange={(e) => setDeepScan(e.target.checked)}
             />
-            Deep local PII scan (experimental): scans text files and reviews entries
-            inside .zip archives locally before import.
+            Deep local PII scan (experimental): scans supported text-file content
+            and .zip entry names (not binary/document bodies like PDF/DOCX)
+            locally before import.
           </label>
         </div>
 
