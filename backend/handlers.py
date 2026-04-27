@@ -1013,14 +1013,25 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
     # ------------------------------------------------------------------
 
     def _git(self, *args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            ["git", *args],
-            cwd=str(BASE_DIR),
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
+        try:
+            return subprocess.run(
+                ["git", *args],
+                cwd=str(BASE_DIR),
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+        except FileNotFoundError:
+            return subprocess.CompletedProcess(
+                ["git", *args],
+                127,
+                stdout="",
+                stderr=(
+                    "Git executable was not found on PATH. Install Git and restart the app, "
+                    "or run in an environment that includes git."
+                ),
+            )
 
     def _handle_updates_check(self):
         if not (BASE_DIR / ".git").exists():
@@ -1030,6 +1041,22 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
                     "can_update": False,
                     "error": "Updates require a git checkout (.git not found).",
                     "details": "This install appears to be a packaged copy without git metadata.",
+                    "branch": "",
+                    "current_commit": "",
+                    "latest_commit": "",
+                    "ahead_by": 0,
+                    "behind_by": 0,
+                }
+            )
+
+        git_check = self._git("--version")
+        if git_check.returncode != 0:
+            return self._json_response(
+                {
+                    "supported": False,
+                    "can_update": False,
+                    "error": "Git is not available in this runtime.",
+                    "details": (git_check.stderr or git_check.stdout).strip(),
                     "branch": "",
                     "current_commit": "",
                     "latest_commit": "",
@@ -1102,6 +1129,16 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
             return self._error_response(
                 HTTPStatus.BAD_REQUEST,
                 "Updates require a git checkout (.git not found).",
+            )
+
+        git_check = self._git("--version")
+        if git_check.returncode != 0:
+            return self._json_response(
+                {
+                    "error": "Git is not available in this runtime.",
+                    "details": (git_check.stderr or git_check.stdout).strip(),
+                },
+                status=HTTPStatus.BAD_REQUEST,
             )
 
         branch_res = self._git("rev-parse", "--abbrev-ref", "HEAD")
