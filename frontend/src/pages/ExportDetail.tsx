@@ -427,8 +427,10 @@ export function ExportDetail() {
           )}
           {deepScanResult.signals === 0 && (
             <p className="mt-1">
-              No keyword matches were found. Deep scan checks supported text files plus ZIP entry names only; edit
-              pattern keywords in Settings if you need broader detection.
+              No keyword matches were found. Deep scan checks supported text-file
+              content plus ZIP entry names only (not binary/document bodies like
+              PDF/DOCX); edit pattern keywords in Settings if you need broader
+              detection.
             </p>
           )}
         </div>

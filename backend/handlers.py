@@ -1149,6 +1149,35 @@ class FileBrowserHandler(SimpleHTTPRequestHandler):
             )
         branch = branch_res.stdout.strip()
 
+        status_res = self._git("status", "--porcelain")
+        if status_res.returncode != 0:
+            return self._json_response(
+                {
+                    "error": "Unable to verify local git status before updating.",
+                    "details": (status_res.stderr or status_res.stdout).strip(),
+                },
+                status=HTTPStatus.INTERNAL_SERVER_ERROR,
+            )
+        dirty_lines = [line for line in status_res.stdout.splitlines() if line.strip()]
+        if dirty_lines:
+            changed_files = []
+            for line in dirty_lines[:20]:
+                parts = line.strip().split(maxsplit=1)
+                if len(parts) == 2:
+                    changed_files.append(parts[1])
+            details = (
+                "Local changes would be overwritten by update. "
+                "Commit, stash, or discard local changes first. "
+                + (f"Changed files: {', '.join(changed_files)}." if changed_files else "")
+            ).strip()
+            return self._json_response(
+                {
+                    "error": "Update blocked by local changes.",
+                    "details": details,
+                },
+                status=HTTPStatus.CONFLICT,
+            )
+
         pull_res = self._git("pull", "--ff-only", "origin", branch)
         if pull_res.returncode != 0:
             return self._json_response(

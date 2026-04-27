@@ -373,7 +373,14 @@ export interface ApplyUpdateResult {
 export async function applyUpdates(): Promise<ApplyUpdateResult> {
   const res = await fetch(`${API_BASE}/updates/apply`, { method: "POST" });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || data.details || "Failed to apply update");
+  if (!res.ok) {
+    const message = data.error
+      ? data.details
+        ? `${data.error} ${data.details}`
+        : data.error
+      : data.details || "Failed to apply update";
+    throw new Error(message);
+  }
   return data;
 }
 
